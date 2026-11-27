@@ -69,7 +69,7 @@ pub mod storage;
 
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
-    BandRowLocation, BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES,
+    BandRowLocation, BandSizing, BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES,
     DualLayerHdrBuf, DualLayerHdrBufParts, DualLayerHdrView, InPlaceTransformInput,
     InPlaceTransformOutput, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView,
     PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneBuf, PlaneView, PlaneViewMut, Rgbx,
@@ -91,9 +91,11 @@ pub use facts::{ExactDepth, FloatFacts, SampleFacts};
 #[cfg(feature = "hash")]
 pub use hashing::HashInclusions;
 pub use hdr::{
-    ClliCodes, ContentLightLevel, DiffuseWhite, HlgRendering, MasteringDisplay, Nits, PeakSource,
-    St2086Codes,
+    ClliCodes, ContentLightLevel, DiffuseWhite, HlgRendering, HlgRenderingParams, MasteringDisplay,
+    Nits, PeakSource, St2086Codes,
 };
+#[cfg(feature = "icc")]
+pub use icc::{IccFingerprint, IccMatchTolerance};
 #[cfg(feature = "rgb")]
 pub use interop::PixelType;
 pub use layout::{

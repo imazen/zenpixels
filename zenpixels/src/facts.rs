@@ -33,14 +33,15 @@ impl FloatFacts {
 
     /// Finite floats (`NO_NAN | NO_INFINITE`).
     pub const FINITE: Self = Self(Self::NO_NAN.0 | Self::NO_INFINITE.0);
-    /// Clean unit interval `[0.0, 1.0]` (`NO_NAN | NO_INFINITE | NO_SUBNORMALS | NON_NEGATIVE | AT_MOST_ONE`).
-    pub const UNIT_INTERVAL: Self = Self(
-        Self::NO_NAN.0
-            | Self::NO_INFINITE.0
-            | Self::NO_SUBNORMALS.0
-            | Self::NON_NEGATIVE.0
-            | Self::AT_MOST_ONE.0,
-    );
+    /// Finite floats inside `[0.0, 1.0]` (`NO_NAN | NO_INFINITE | NON_NEGATIVE | AT_MOST_ONE`).
+    ///
+    /// Subnormal values inside `[0.0, 1.0]` (e.g. near-black linear light `1e-40`) satisfy
+    /// `UNIT_INTERVAL`. Use [`NORMAL_UNIT_INTERVAL`](Self::NORMAL_UNIT_INTERVAL) when
+    /// `NO_SUBNORMALS` is also required.
+    pub const UNIT_INTERVAL: Self =
+        Self(Self::NO_NAN.0 | Self::NO_INFINITE.0 | Self::NON_NEGATIVE.0 | Self::AT_MOST_ONE.0);
+    /// Finite floats inside `[0.0, 1.0]` with no subnormals (`UNIT_INTERVAL | NO_SUBNORMALS`).
+    pub const NORMAL_UNIT_INTERVAL: Self = Self(Self::UNIT_INTERVAL.0 | Self::NO_SUBNORMALS.0);
 
     /// Raw bitmask representation.
     #[inline]
@@ -63,11 +64,18 @@ impl FloatFacts {
         self.contains(Self::FINITE)
     }
 
-    /// Whether all samples are proven inside `[0.0, 1.0]` without NaN, Inf, or subnormals.
+    /// Whether all samples are proven finite and inside `[0.0, 1.0]` (subnormals allowed).
     #[inline]
     #[must_use]
     pub const fn is_unit_interval(self) -> bool {
         self.contains(Self::UNIT_INTERVAL)
+    }
+
+    /// Whether all samples are proven finite, inside `[0.0, 1.0]`, and free of subnormals.
+    #[inline]
+    #[must_use]
+    pub const fn is_normal_unit_interval(self) -> bool {
+        self.contains(Self::NORMAL_UNIT_INTERVAL)
     }
 
     /// Combine two fact sets (union of proven properties).
@@ -114,6 +122,68 @@ impl FloatFacts {
                 positive = false;
             }
             if v > 1.0 {
+                at_most_one = false;
+            }
+        }
+        let mut bits = 0u8;
+        if no_nan {
+            bits |= Self::NO_NAN.0;
+        }
+        if no_inf {
+            bits |= Self::NO_INFINITE.0;
+        }
+        if no_sub {
+            bits |= Self::NO_SUBNORMALS.0;
+        }
+        if non_neg {
+            bits |= Self::NON_NEGATIVE.0;
+        }
+        if positive {
+            bits |= Self::POSITIVE.0;
+        }
+        if at_most_one {
+            bits |= Self::AT_MOST_ONE.0;
+        }
+        Self(bits)
+    }
+
+    /// Measure exact [`FloatFacts`] across a slice of IEEE 754 binary16 ([`F16Sample`](crate::F16Sample)) samples.
+    ///
+    /// Classifies `f16` subnormals, NaNs, infinities, signs, and `<= 1.0` directly on binary16 bits.
+    #[must_use]
+    pub fn measure_f16_slice(samples: &[crate::pixel_types::F16Sample]) -> Self {
+        let mut no_nan = true;
+        let mut no_inf = true;
+        let mut no_sub = true;
+        let mut non_neg = true;
+        let mut positive = true;
+        let mut at_most_one = true;
+        for &s in samples {
+            let bits = s.to_bits();
+            let sign = (bits & 0x8000) != 0;
+            let exp = (bits >> 10) & 0x1F;
+            let mant = bits & 0x03FF;
+            let mag = bits & 0x7FFF;
+            if exp == 0x1F {
+                if mant != 0 {
+                    no_nan = false;
+                    non_neg = false;
+                    positive = false;
+                    at_most_one = false;
+                    continue;
+                }
+                no_inf = false;
+            } else if exp == 0 && mant != 0 {
+                no_sub = false;
+            }
+            if mag == 0 {
+                // +0.0 or -0.0
+                positive = false;
+            } else if sign {
+                non_neg = false;
+                positive = false;
+            } else if mag > 0x3C00 {
+                // > 1.0 (0x3C00 is +1.0 in IEEE 754 binary16)
                 at_most_one = false;
             }
         }
@@ -202,11 +272,12 @@ impl SampleFacts {
         self
     }
 
-    /// Facts guaranteed for a freshly allocated buffer of `format` (with color channels zeroed
-    /// and [`AlphaMode::Opaque`] alpha slots initialized to channel maximum).
+    /// Facts guaranteed for a freshly allocated black-filled buffer of `format` (as produced by
+    /// [`PixelBuf::new`](crate::PixelBuf::new): color channels zeroed and [`AlphaMode::Opaque`]
+    /// alpha slots initialized to channel maximum).
     #[inline]
     #[must_use]
-    pub const fn for_zeroed_format(format: &PixelFormat) -> Self {
+    pub const fn for_black_format(format: &PixelFormat) -> Self {
         let spec = format;
         let layout = spec.layout;
         let sample = layout.sample;
@@ -221,7 +292,7 @@ impl SampleFacts {
 
         if sample.is_float() {
             return Self {
-                float: FloatFacts::UNIT_INTERVAL,
+                float: FloatFacts::NORMAL_UNIT_INTERVAL,
                 depth: None,
                 all_opaque,
                 all_grayscale,
@@ -284,7 +355,7 @@ impl SampleFacts {
                 spec.color,
                 ColorSpace::Rgb { .. } | ColorSpace::Gray { .. } | ColorSpace::Icc { .. }
             ) {
-                FloatFacts::UNIT_INTERVAL.union(FloatFacts::POSITIVE)
+                FloatFacts::NORMAL_UNIT_INTERVAL.union(FloatFacts::POSITIVE)
             } else {
                 FloatFacts::FINITE
             };
@@ -394,6 +465,16 @@ impl SampleFacts {
     pub const fn is_exact_at(self, color_bits: u8, alpha_bits: u8) -> bool {
         match self.depth {
             Some(d) => d.color_exact_at(color_bits) && d.alpha_exact_at(alpha_bits),
+            None => false,
+        }
+    }
+
+    /// Whether current integer color channels are proven exact at `color_bits` (ignoring alpha depth).
+    #[inline]
+    #[must_use]
+    pub const fn is_color_exact_at(self, color_bits: u8) -> bool {
+        match self.depth {
+            Some(d) => d.color_exact_at(color_bits),
             None => false,
         }
     }

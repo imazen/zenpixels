@@ -10,8 +10,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use zenpixels::{
-    BandedBuf, ColorSpace, DiffuseWhite, Orientation, PixelBuf, PixelFormat, PlanarBuf, PlaneBuf,
-    PlaneFormat, PlaneRole, Primaries, SampleType,
+    BandSizing, BandedBuf, ColorSpace, DiffuseWhite, Orientation, PixelBuf, PixelFormat, PlanarBuf,
+    PlaneBuf, PlaneFormat, PlaneRole, Primaries, SampleType,
 };
 use zenpixels_convert::{
     Accelerators, ConvertError, ConvertPolicy, ImagePlan, LightLevelMethod, PeakSource,
@@ -104,9 +104,13 @@ fn converter_allocating_paths_return_allocation_failed_on_oom() {
     .unwrap_err();
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
 
-    let banded = BandedBuf::from_view(&src.as_view(), 4096).unwrap();
+    let banded = BandedBuf::from_view(&src.as_view(), BandSizing::MaxBandBytes(4096)).unwrap();
     let err = with_oom_above(2048, || {
-        apply_orientation_banded(&banded, Orientation::Rotate90, 4096)
+        apply_orientation_banded(
+            &banded,
+            Orientation::Rotate90,
+            BandSizing::MaxBandBytes(4096),
+        )
     })
     .unwrap_err();
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
@@ -140,7 +144,29 @@ fn converter_allocating_paths_return_allocation_failed_on_oom() {
         .unwrap()
         .with_color(ColorSpace::SRGB)
         .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
-    let err = with_oom_above(4096, || reconstruct_planar_f32(&planar.as_view())).unwrap_err();
+    let err = with_oom_above(4096, || {
+        reconstruct_planar_f32(&planar.as_view(), &PlanarReconstructionOptions::nearest())
+    })
+    .unwrap_err();
+    assert_eq!(*err.error(), ConvertError::AllocationFailed);
+
+    // 5. compact_in_place on immutable external storage returns AllocationFailed on OOM (never silent no-op!)
+    let ext_rgba = PixelBuf::from_external(
+        std::sync::Arc::<[u8]>::from(vec![255u8; 64 * 64 * 4].into_boxed_slice()),
+        64,
+        64,
+        64 * 4,
+        PixelFormat::RGBA8_SRGB,
+    )
+    .unwrap();
+    let mut ext_mut = ext_rgba;
+    let err = with_oom_above(4096, || {
+        zenpixels_convert::compact_in_place(
+            &mut ext_mut,
+            zenpixels_convert::AlphaCompaction::DropUnusedLanes,
+        )
+    })
+    .unwrap_err();
     assert_eq!(*err.error(), ConvertError::AllocationFailed);
 }
 
@@ -161,8 +187,15 @@ fn into_and_row_apis_execute_with_zero_heap_allocations() {
     let src_img = PixelBuf::new(33, 29, PixelFormat::RGB8_SRGB).unwrap();
     let mut dst_img = PixelBuf::new(29, 33, PixelFormat::RGB8_SRGB).unwrap();
 
-    let src_banded = BandedBuf::from_view(&src_img.as_view(), 33 * 3 * 7).unwrap();
-    let mut dst_banded = BandedBuf::new(29, 33, PixelFormat::RGB8_SRGB, 29 * 3 * 5).unwrap();
+    let src_banded =
+        BandedBuf::from_view(&src_img.as_view(), BandSizing::MaxBandBytes(33 * 3 * 7)).unwrap();
+    let mut dst_banded = BandedBuf::new(
+        29,
+        33,
+        PixelFormat::RGB8_SRGB,
+        BandSizing::MaxBandBytes(29 * 3 * 5),
+    )
+    .unwrap();
 
     let y = PlaneBuf::from_external(
         vec![180u8; 256],

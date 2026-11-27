@@ -6,10 +6,11 @@
 
 #[cfg(feature = "gainmap")]
 use zenpixels_convert::gainmap::{
-    GainMapApplyConfig, GainMapOrientation, GainMapRowExtractor, apply_gain_map_oriented,
+    GainMapApplyConfig, GainMapOrientation, GainMapRowExtractor, LinearInputChannels,
+    apply_gain_map_oriented,
 };
 use zenpixels_convert::{
-    Accelerators, AlphaMode, BandedBuf, ChromaSiting, Cicp, ColorOrigin, ColorSpace,
+    Accelerators, AlphaMode, BandSizing, BandedBuf, ChromaSiting, Cicp, ColorOrigin, ColorSpace,
     ContentLightLevel, ConvertError, ConvertPolicy, DiffuseWhite, GamutPolicy, HdrMetadata,
     HlgMode, HlgRendering, ImagePlan, Orientation, OutputPlan, OutputSignaling, ParametricFormat,
     PeakSource, PixelBuf, PixelFormat, PixelRect, PlanarBuf, PlanarReconstructionOptions,
@@ -249,7 +250,7 @@ fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
     assert_eq!(out_words, &[expected_word; 4]);
 
     // 2. Orientation propagates through BandedBuf conversion and load_bearing compaction.
-    let mut dst_band = BandedBuf::new(4, 1, spec.clone(), 64).unwrap();
+    let mut dst_band = BandedBuf::new(4, 1, spec.clone(), BandSizing::MaxBandBytes(64)).unwrap();
     ImagePlan::build(
         &spec,
         &spec,
@@ -272,9 +273,12 @@ fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
     let reduced = compact_to_buf(&rgba_gray.as_view()).unwrap().unwrap();
     assert_eq!(reduced.format().layout, SampleLayout::GRAY8);
     assert_eq!(reduced.orientation(), Orientation::Rotate270);
-    compact_in_place(
-        &mut rgba_gray,
-        zenpixels_convert::AlphaCompaction::DropUnusedLanes,
+    assert!(
+        compact_in_place(
+            &mut rgba_gray,
+            zenpixels_convert::AlphaCompaction::DropUnusedLanes,
+        )
+        .unwrap()
     );
     assert_eq!(rgba_gray.orientation(), Orientation::Rotate270);
 
@@ -357,7 +361,7 @@ fn ycbcr_lossless_matrices_bilinear_siting_planar_rgb_and_multi_targets() {
         .clone()
         .with_color(ColorSpace::DISPLAY_P3)
         .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::CHROMA_DERIVED_NCL);
-    let cd_f32 = reconstruct_planar_f32(&cd_view).unwrap();
+    let cd_f32 = reconstruct_planar_f32(&cd_view, &PlanarReconstructionOptions::nearest()).unwrap();
     assert_eq!(cd_f32.format().layout, SampleLayout::RGBF32);
 
     // 3b. MatrixCoefficients <-> YcbcrMatrix lossless interop.
@@ -672,7 +676,13 @@ fn gainmap_decoupled_3ch_shared_metadata_and_passthrough_orientation() {
     let alt = [2.0_f32, 1.0, 0.5, 1.0, 1.0, 2.0];
     let mut dst_3ch = [0u8; 6];
     ext_shared
-        .encode_row_linear_f32(&base, &alt, 3, SampleLayout::RGB8, &mut dst_3ch)
+        .encode_row_linear_f32(
+            &base,
+            &alt,
+            LinearInputChannels::Rgb,
+            SampleLayout::RGB8,
+            &mut dst_3ch,
+        )
         .unwrap();
     // Pixel 0: R boost ~4x (2 stops -> ~255), G boost ~2x (1 stop -> ~128), B boost 1x (0 stops -> 0)
     assert!(dst_3ch[0] > 240 && dst_3ch[1] > 100 && dst_3ch[1] < 160 && dst_3ch[2] < 10);
@@ -682,7 +692,13 @@ fn gainmap_decoupled_3ch_shared_metadata_and_passthrough_orientation() {
     let mut dst_1ch = [0u8; 2];
     assert_eq!(
         *ext_per
-            .encode_row_linear_f32(&base, &alt, 3, SampleLayout::GRAY8, &mut dst_1ch)
+            .encode_row_linear_f32(
+                &base,
+                &alt,
+                LinearInputChannels::Rgb,
+                SampleLayout::GRAY8,
+                &mut dst_1ch,
+            )
             .unwrap_err()
             .error(),
         ConvertError::UnsupportedRoute
@@ -692,7 +708,7 @@ fn gainmap_decoupled_3ch_shared_metadata_and_passthrough_orientation() {
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -844,7 +860,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(d65_icc.clone()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
         },
@@ -859,7 +875,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(acescg_icc.clone()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
         },
@@ -888,7 +904,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
         SampleLayout::RGBF32,
         ColorSpace::Icc {
             profile: Arc::from(acescg_icc),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: zenpixels_convert::RenderingIntent::RelativeColorimetric,
         },
@@ -910,7 +926,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
         &native_acescg_spec,
         &PixelFormat::RGBF32_LINEAR,
         &ConvertPolicy::permissive(),
-        PeakSource::default(),
+        PeakSource::Measured,
     )
     .unwrap()
     .execute(&native_src)
@@ -928,7 +944,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
             icc_src.format(),
             &PixelFormat::RGBF32_LINEAR,
             &mox_pol,
-            PeakSource::default(),
+            PeakSource::Measured,
         )
         .unwrap()
         .execute(&icc_src)
@@ -949,7 +965,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
             icc_src.format(),
             &PixelFormat::RGBF32_LINEAR,
             &lcms_pol,
-            PeakSource::default(),
+            PeakSource::Measured,
         )
         .unwrap()
         .execute(&icc_src)
@@ -968,7 +984,7 @@ fn icc_44byte_cicptype_interop_with_cms_load_bearing_and_gainmap() {
             icc_src.format(),
             &native_acescg_spec,
             &lcms_pol,
-            PeakSource::default(),
+            PeakSource::Measured,
         )
         .unwrap()
         .execute(&icc_src)
@@ -1015,7 +1031,8 @@ fn enough_stop_reexports_available_at_convert_root() {
 fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     use zenpixels_convert::{
         AlphaCompaction, RowPlan, apply_orientation, apply_orientation_owned,
-        bake_orientation_owned, compact_in_place, scan_facts, to_gray8, to_rgb8,
+        bake_orientation_owned, compact_in_place, scan_facts, to_gray8_if_opaque,
+        to_rgb8_if_opaque,
     };
 
     // M1: ConvertPolicy::default() is lossless (forbids depth, alpha, and range loss, preserves extended gamut).
@@ -1079,30 +1096,35 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
         ConvertError::RangeConversionForbidden
     );
 
-    // M2: to_rgb8 / to_gray8 refuse unproven/semi-transparent alpha, succeed on proven opaque.
+    // M2: to_rgb8_if_opaque / to_gray8_if_opaque refuse unproven/semi-transparent alpha, succeed on proven opaque.
     let semi =
         PixelBuf::from_typed(vec![10u8, 20, 30, 128], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert_eq!(
-        *to_rgb8(&semi.as_view()).unwrap_err().error(),
+        *to_rgb8_if_opaque(&semi.as_view()).unwrap_err().error(),
         ConvertError::AlphaLossForbidden
     );
     assert_eq!(
-        *to_gray8(&semi.as_view()).unwrap_err().error(),
+        *to_gray8_if_opaque(&semi.as_view()).unwrap_err().error(),
         ConvertError::AlphaLossForbidden
     );
     let mut opaque_rgba =
         PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert_eq!(
-        *to_rgb8(&opaque_rgba.as_view()).unwrap_err().error(),
+        *to_rgb8_if_opaque(&opaque_rgba.as_view())
+            .unwrap_err()
+            .error(),
         ConvertError::AlphaLossForbidden
     );
     let facts = scan_facts(&opaque_rgba.as_view());
     opaque_rgba.assume_facts(facts);
     assert_eq!(
-        to_rgb8(&opaque_rgba.as_view()).unwrap().as_view().row(0),
+        to_rgb8_if_opaque(&opaque_rgba.as_view())
+            .unwrap()
+            .as_view()
+            .row(0),
         &[10, 20, 30]
     );
-    assert!(to_gray8(&opaque_rgba.as_view()).is_ok());
+    assert!(to_gray8_if_opaque(&opaque_rgba.as_view()).is_ok());
 
     // M7: apply_orientation_owned(rot90_buf, Identity) clears pending orientation to Identity
     // zero-copy, matching borrowed apply_orientation(&view, Identity).
@@ -1133,7 +1155,7 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     )
     .unwrap();
     let ptr_retag = b_retag.as_view().row(0).as_ptr() as usize;
-    compact_in_place(&mut b_retag, AlphaCompaction::RetagOpaque);
+    assert!(compact_in_place(&mut b_retag, AlphaCompaction::RetagOpaque).unwrap());
     assert_eq!(b_retag.format().layout, SampleLayout::RGBA8);
     assert_eq!(b_retag.format().color.alpha(), AlphaMode::Opaque);
     assert_eq!(b_retag.as_view().row(0).as_ptr() as usize, ptr_retag);
@@ -1146,7 +1168,7 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     )
     .unwrap();
     let ptr_drop = b_drop.as_view().row(0).as_ptr() as usize;
-    compact_in_place(&mut b_drop, AlphaCompaction::DropUnusedLanes);
+    assert!(compact_in_place(&mut b_drop, AlphaCompaction::DropUnusedLanes).unwrap());
     assert_eq!(b_drop.format(), &PixelFormat::RGB8_SRGB);
     assert_eq!(b_drop.as_view().row(0), &[10, 20, 30, 40, 50, 60]);
     assert_eq!(b_drop.as_view().row(0).as_ptr() as usize, ptr_drop);

@@ -81,17 +81,32 @@ pub enum ChromaSiting {
 }
 
 impl ChromaSiting {
-    /// Fractional `(dx, dy)` offset of chroma sample `(0, 0)` within its `hx × vy` luma cell
-    /// (in luma-pixel units relative to the top-left luma sample center at `(0.0, 0.0)`),
-    /// or `None` for [`Self::Unknown`].
+    /// Fractional `(dx, dy)` offset of chroma sample `(0, 0)` within its subsampling cell
+    /// in **luma-pixel units** relative to the top-left luma sample center at `(0.0, 0.0)`.
     ///
-    /// For `hx = 2, vy = 2` (4:2:0):
+    /// Returns `None` for [`Self::Unknown`] or [`ChromaSubsampling::Mono`].
+    ///
+    /// For [`ChromaSubsampling::Yuv420`] (`2×2`):
     /// - `TopLeft` → `(0.0, 0.0)`
     /// - `Left` → `(0.0, 0.5)`
     /// - `Center` → `(0.5, 0.5)`
     #[inline]
     #[must_use]
-    pub const fn offset_in_cell(
+    pub const fn offset_in_luma_pixels(self, subsampling: ChromaSubsampling) -> Option<(f32, f32)> {
+        match subsampling.factors() {
+            Some((hx, vy)) => self.offset_in_luma_pixels_for_divisors(hx, vy),
+            None => None,
+        }
+    }
+
+    /// Fractional `(dx, dy)` offset of chroma sample `(0, 0)` within an arbitrary
+    /// `horizontal_divisor × vertical_divisor` luma cell in **luma-pixel units** relative to
+    /// the top-left luma sample center at `(0.0, 0.0)`, or `None` for [`Self::Unknown`].
+    ///
+    /// Divisors `<= 1` yield `0.0` along that axis.
+    #[inline]
+    #[must_use]
+    pub const fn offset_in_luma_pixels_for_divisors(
         self,
         horizontal_divisor: u8,
         vertical_divisor: u8,
@@ -173,6 +188,8 @@ impl fmt::Display for CodePlaneError {
 impl core::error::Error for CodePlaneError {}
 
 /// Geometry and component selection for borrowing one component from an interleaved code plane.
+///
+/// Construct directly with struct literal syntax so all five fields are named at the call site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InterleavedCodeLayout {
     /// Active row width in storage words across all interleaved components (`width_pixels * component_count`).
@@ -187,27 +204,6 @@ pub struct InterleavedCodeLayout {
     pub component_index: usize,
 }
 
-impl InterleavedCodeLayout {
-    /// Construct an interleaved code-plane layout descriptor.
-    #[inline]
-    #[must_use]
-    pub const fn new(
-        width_words: usize,
-        height: usize,
-        stride_words: usize,
-        component_count: usize,
-        component_index: usize,
-    ) -> Self {
-        Self {
-            width_words,
-            height,
-            stride_words,
-            component_count,
-            component_index,
-        }
-    }
-}
-
 impl<'a> CodePlane<'a> {
     /// Borrow a single-component `u8` plane (`stride_words >= width_pixels`).
     pub fn from_u8(
@@ -219,7 +215,13 @@ impl<'a> CodePlane<'a> {
     ) -> Result<Self, CodePlaneError> {
         Self::component_from_u8(
             data,
-            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            InterleavedCodeLayout {
+                width_words: width_pixels,
+                height,
+                stride_words,
+                component_count: 1,
+                component_index: 0,
+            },
             encoding,
         )
     }
@@ -277,7 +279,13 @@ impl<'a> CodePlane<'a> {
     ) -> Result<Self, CodePlaneError> {
         Self::component_from_u16(
             data,
-            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            InterleavedCodeLayout {
+                width_words: width_pixels,
+                height,
+                stride_words,
+                component_count: 1,
+                component_index: 0,
+            },
             encoding,
         )
     }
@@ -350,13 +358,13 @@ impl<'a> CodePlane<'a> {
         match spec.sample {
             SampleType::U8 => Self::component_from_u8(
                 plane.data(),
-                InterleavedCodeLayout::new(
+                InterleavedCodeLayout {
                     width_words,
                     height,
-                    plane.stride_bytes(),
-                    components,
-                    index,
-                ),
+                    stride_words: plane.stride_bytes(),
+                    component_count: components,
+                    component_index: index,
+                },
                 encoding,
             ),
             SampleType::U16 => {
@@ -367,13 +375,13 @@ impl<'a> CodePlane<'a> {
                     .map_err(|_| CodePlaneError::Geometry)?;
                 Self::component_from_u16(
                     words,
-                    InterleavedCodeLayout::new(
+                    InterleavedCodeLayout {
                         width_words,
                         height,
-                        plane.stride_bytes() / 2,
-                        components,
-                        index,
-                    ),
+                        stride_words: plane.stride_bytes() / 2,
+                        component_count: components,
+                        component_index: index,
+                    },
                     encoding,
                 )
             }
@@ -501,7 +509,13 @@ impl<'a> CodePlaneMut<'a> {
     ) -> Result<Self, CodePlaneError> {
         Self::component_from_u8_mut(
             data,
-            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            InterleavedCodeLayout {
+                width_words: width_pixels,
+                height,
+                stride_words,
+                component_count: 1,
+                component_index: 0,
+            },
             encoding,
         )
     }
@@ -560,7 +574,13 @@ impl<'a> CodePlaneMut<'a> {
     ) -> Result<Self, CodePlaneError> {
         Self::component_from_u16_mut(
             data,
-            InterleavedCodeLayout::new(width_pixels, height, stride_words, 1, 0),
+            InterleavedCodeLayout {
+                width_words: width_pixels,
+                height,
+                stride_words,
+                component_count: 1,
+                component_index: 0,
+            },
             encoding,
         )
     }
@@ -636,7 +656,13 @@ impl<'a> CodePlaneMut<'a> {
         match spec.sample {
             SampleType::U8 => Self::component_from_u8_mut(
                 data,
-                InterleavedCodeLayout::new(width_words, height, stride, components, index),
+                InterleavedCodeLayout {
+                    width_words,
+                    height,
+                    stride_words: stride,
+                    component_count: components,
+                    component_index: index,
+                },
                 encoding,
             ),
             SampleType::U16 => {
@@ -647,7 +673,13 @@ impl<'a> CodePlaneMut<'a> {
                     .map_err(|_| CodePlaneError::Geometry)?;
                 Self::component_from_u16_mut(
                     words,
-                    InterleavedCodeLayout::new(width_words, height, stride / 2, components, index),
+                    InterleavedCodeLayout {
+                        width_words,
+                        height,
+                        stride_words: stride / 2,
+                        component_count: components,
+                        component_index: index,
+                    },
                     encoding,
                 )
             }

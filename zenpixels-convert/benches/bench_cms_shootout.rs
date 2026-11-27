@@ -199,7 +199,7 @@ fn icc_spec(layout: SampleLayout, profile: Arc<[u8]>, alpha: AlphaMode) -> Pixel
         layout,
         ColorSpace::Icc {
             profile,
-            channels: 3,
+            color_channels: 3,
             alpha,
             intent: RenderingIntent::RelativeColorimetric,
         },

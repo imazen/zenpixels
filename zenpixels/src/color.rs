@@ -1341,8 +1341,8 @@ pub enum ColorSpace {
     Icc {
         /// Raw ICC profile bytes.
         profile: Arc<[u8]>,
-        /// Number of color channels (excluding alpha, e.g. 3 for RGB, 1 for Gray, 4 for CMYK).
-        channels: u8,
+        /// Number of color channels **excluding** alpha/padding (e.g. `3` for RGB, `1` for Gray, `4` for CMYK).
+        color_channels: u8,
         /// Alpha interpretation.
         alpha: AlphaMode,
         /// Preferred rendering intent.
@@ -1350,8 +1350,8 @@ pub enum ColorSpace {
     },
     /// Non-color numeric data (depth maps, normals, masks, generic signed/wide payloads).
     Untagged {
-        /// Total channel count.
-        channels: u8,
+        /// Total channel count **including** any alpha slot.
+        total_channels: u8,
         /// Alpha interpretation (`None` for pure numeric data).
         alpha: AlphaMode,
     },
@@ -1631,13 +1631,15 @@ impl ColorSpace {
         }
     }
 
-    /// Project this color space to a raw ITU-T H.273 RGB [`Cicp`] syntax tuple when possible.
+    /// Lossily project this color space to a raw ITU-T H.273 RGB [`Cicp`] syntax tuple when possible.
     ///
-    /// Note: this returns `(9, 18, 0, true)` for both [`HlgMode::Scene`] and [`HlgMode::Display`].
-    /// When lossless round-trip fidelity of display rendering parameters and diffuse white is
-    /// required, use [`project_cicp`](Self::project_cicp).
+    /// Silently drops any explicit [`DiffuseWhite`] anchor and collapses [`HlgMode::Display`]
+    /// rendering parameters into scene-referred `(9, 18, 0, true)`. When lossless round-trip
+    /// fidelity of display rendering parameters and diffuse white is required, use
+    /// [`project_cicp`](Self::project_cicp).
     #[must_use]
-    pub fn to_cicp(&self) -> Option<Cicp> {
+    #[doc(alias = "to_cicp")]
+    pub fn to_cicp_lossy(&self) -> Option<Cicp> {
         match *self {
             Self::Rgb {
                 primaries,
@@ -1857,8 +1859,8 @@ pub enum ParametricColor {
     },
     /// Non-color numeric data (depth maps, normals, gain maps, masks).
     Untagged {
-        /// Total channel count.
-        channels: u8,
+        /// Total channel count **including** any alpha slot.
+        total_channels: u8,
         /// Alpha interpretation.
         alpha: AlphaMode,
     },
@@ -1989,7 +1991,13 @@ impl ParametricColor {
                 alpha,
                 icc: None,
             },
-            Self::Untagged { channels, alpha } => ColorSpace::Untagged { channels, alpha },
+            Self::Untagged {
+                total_channels,
+                alpha,
+            } => ColorSpace::Untagged {
+                total_channels,
+                alpha,
+            },
         }
     }
 
@@ -2039,7 +2047,13 @@ impl ParametricColor {
                 icc: None,
             } => Some(Self::Cmyk { inverted, alpha }),
             ColorSpace::Cmyk { icc: Some(_), .. } | ColorSpace::Icc { .. } => None,
-            ColorSpace::Untagged { channels, alpha } => Some(Self::Untagged { channels, alpha }),
+            ColorSpace::Untagged {
+                total_channels,
+                alpha,
+            } => Some(Self::Untagged {
+                total_channels,
+                alpha,
+            }),
         }
     }
 
@@ -2919,7 +2933,7 @@ impl PixelFormat {
             }
         } else {
             ColorSpace::Untagged {
-                channels: order.channels() as u8,
+                total_channels: order.channels() as u8,
                 alpha,
             }
         };
@@ -3027,19 +3041,21 @@ impl PixelFormat {
                 }
             }
             ColorSpace::Icc {
-                profile, channels, ..
+                profile,
+                color_channels,
+                ..
             } => {
                 if validate_icc_structure(profile).is_err() {
                     return Err(whereat::at!(ColorError::InvalidIccProfile));
                 }
-                let expected = (*channels as usize)
+                let expected = (*color_channels as usize)
                     + usize::from(order.has_alpha_slot() || order.has_padding_slot());
                 if order.channels() != expected {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
                 match &profile[16..20] {
                     b"GRAY" => {
-                        if *channels != 1
+                        if *color_channels != 1
                             || !(order.is_gray_family()
                                 || matches!(order, ChannelOrder::Generic(1 | 2)))
                         {
@@ -3047,7 +3063,7 @@ impl PixelFormat {
                         }
                     }
                     b"RGB " => {
-                        if *channels != 3
+                        if *color_channels != 3
                             || !(order.is_rgb_family()
                                 || matches!(order, ChannelOrder::Generic(3 | 4)))
                         {
@@ -3055,7 +3071,7 @@ impl PixelFormat {
                         }
                     }
                     b"CMYK" => {
-                        if *channels != 4
+                        if *color_channels != 4
                             || !(order.is_cmyk_family()
                                 || matches!(order, ChannelOrder::Generic(4 | 5)))
                         {
@@ -3063,7 +3079,7 @@ impl PixelFormat {
                         }
                     }
                     b"Lab " => {
-                        if *channels != 3
+                        if *color_channels != 3
                             || !matches!(
                                 order,
                                 ChannelOrder::Perceptual3
@@ -3075,7 +3091,7 @@ impl PixelFormat {
                         }
                     }
                     b"XYZ "
-                        if *channels != 3
+                        if *color_channels != 3
                             || !(order.is_xyz_family()
                                 || matches!(order, ChannelOrder::Generic(3 | 4))) =>
                     {
@@ -3084,8 +3100,8 @@ impl PixelFormat {
                     _ => {}
                 }
             }
-            ColorSpace::Untagged { channels, .. } => {
-                if order.channels() != *channels as usize {
+            ColorSpace::Untagged { total_channels, .. } => {
+                if order.channels() != *total_channels as usize {
                     return Err(whereat::at!(ColorError::ColorLayoutMismatch));
                 }
             }
@@ -3663,13 +3679,15 @@ impl GainMapMetadata {
         self
     }
 
-    /// Fallibly construct a symmetric forward SDR-base → HDR-alternate parameter set with
-    /// standard `1/64` offsets, taking headroom boost in **log₂ stops**.
+    /// Fallibly construct a forward SDR-base (`0` stops) → HDR-alternate (`+max_boost_stops`)
+    /// gain-map parameter set with `[0, +max_boost_stops]` gain range and standard `1/64`
+    /// base/alternate offsets.
     ///
     /// Returns `None` if `max_boost_stops` is non-finite, `<= 0.0`, or rounds to zero at
     /// `1/1_000_000` precision.
     #[must_use]
-    pub fn symmetric_stops(max_boost_stops: f32) -> Option<Self> {
+    #[doc(alias = "symmetric_stops")]
+    pub fn sdr_to_hdr_stops(max_boost_stops: f32) -> Option<Self> {
         if !max_boost_stops.is_finite() || max_boost_stops <= 0.0 {
             return None;
         }

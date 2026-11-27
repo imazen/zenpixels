@@ -9,25 +9,25 @@
 
 ## summary
 #
-#   inherent methods                           71
-#   trait roster entries (type × trait)        78
+#   inherent methods                           74
+#   trait roster entries (type × trait)        82
 #
 # per-module pub lines:
 #   (root)                            6
-#   buffer                            5
+#   buffer                            6
 #   cicp                              5
 #   color                            26
 #   facts                             2
 #   hashing                           1
 #   hdr                               7
-#   icc                               2
+#   icc                               4
 #   layout                           11
 #   orientation                       1
 #   pixel_types                       2
 #   sample                            2
 #   storage                           1
 
-## items (71 lines)
+## items (74 lines)
 
 pub fn ChromaSiting::assert_fields_are_eq(&self)
 pub fn ChromaSubsampling::assert_fields_are_eq(&self)
@@ -36,6 +36,7 @@ pub fn ExactDepth::assert_fields_are_eq(&self)
 pub fn ExactDepthError::assert_fields_are_eq(&self)
 pub fn InterleavedCodeLayout::assert_fields_are_eq(&self)
 pub fn buffer::BandRowLocation::assert_fields_are_eq(&self)
+pub fn buffer::BandSizing::assert_fields_are_eq(&self)
 pub fn buffer::Bgrx::assert_fields_are_eq(&self)
 pub fn buffer::BufFill::assert_fields_are_eq(&self)
 pub fn buffer::BufferError::assert_fields_are_eq(&self)
@@ -81,7 +82,9 @@ pub fn hdr::HlgRendering::assert_fields_are_eq(&self)
 pub fn hdr::Nits::assert_fields_are_eq(&self)
 pub fn hdr::PeakSource::assert_fields_are_eq(&self)
 pub fn hdr::St2086Codes::assert_fields_are_eq(&self)
+pub fn icc::IccFingerprint::assert_fields_are_eq(&self)
 pub fn icc::IccIdentification::assert_fields_are_eq(&self)
+pub fn icc::IccMatchTolerance::assert_fields_are_eq(&self)
 pub fn icc::IdentificationUse::assert_fields_are_eq(&self)
 pub fn layout::BitPacking::assert_fields_are_eq(&self)
 pub fn layout::ChannelOrder::assert_fields_are_eq(&self)
@@ -101,7 +104,7 @@ pub fn sample::SampleEncoding::assert_fields_are_eq(&self)
 pub fn sample::SampleEncodingError::assert_fields_are_eq(&self)
 pub fn storage::StorageError::assert_fields_are_eq(&self)
 
-## trait impls (78 types)
+## trait impls (82 types)
 
 ChromaSiting: TrivialClone
 ChromaSubsampling: TrivialClone
@@ -111,6 +114,7 @@ ExactDepth: TrivialClone
 ExactDepthError: TrivialClone
 InterleavedCodeLayout: TrivialClone
 buffer::BandRowLocation: TrivialClone
+buffer::BandSizing: TrivialClone
 buffer::Bgrx: TrivialClone
 buffer::BufFill: TrivialClone
 buffer::BufferError: TrivialClone
@@ -155,11 +159,14 @@ hdr::ClliCodes: TrivialClone
 hdr::ContentLightLevel: TrivialClone
 hdr::DiffuseWhite: TrivialClone
 hdr::HlgRendering: TrivialClone
+hdr::HlgRenderingParams: TrivialClone
 hdr::MasteringDisplay: TrivialClone
 hdr::Nits: TrivialClone
 hdr::PeakSource: TrivialClone
 hdr::St2086Codes: TrivialClone
+icc::IccFingerprint: TrivialClone
 icc::IccIdentification: TrivialClone
+icc::IccMatchTolerance: TrivialClone
 icc::IdentificationUse: TrivialClone
 layout::BitPacking: TrivialClone
 layout::ChannelOrder: TrivialClone

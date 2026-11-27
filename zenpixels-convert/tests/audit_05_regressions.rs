@@ -395,12 +395,13 @@ fn output_plan_validates_spec_on_identity_and_signaling_contracts() {
                 content_light_level: Some(zenpixels_convert::ContentLightLevel::new(1000, 400)),
                 mastering: None,
             });
-        let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
+        let pol =
+            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap());
         let plan = OutputPlan::build(
             hdr_spec,
             PixelFormat::RGB8_SRGB,
             &pol,
-            PeakSource::Fixed(Nits::new(1000.0).unwrap()),
+            PeakSource::Fixed(Nits::new_positive(1000.0).unwrap()),
             OutputSignaling::Auto,
         )
         .unwrap();
@@ -612,20 +613,31 @@ fn photometry_matte_before_clip_hlg_swizzle_parity_white_rescale_unknown_transfe
 #[cfg(feature = "bt2446a")]
 #[test]
 fn bt2446a_respects_baked_peaks_and_rejects_tiny_peaks() {
-    use zenpixels_convert::{Bt2446A, Nits, ToneMapper};
+    use zenpixels_convert::{Bt2446A, Bt2446APipelineManaged, Nits, Requirements, ToneMapper};
 
-    let mapper = Bt2446A::with_peaks(Nits::new(4000.0).unwrap(), Nits::new(100.0).unwrap());
+    let mapper = Bt2446A::with_peaks(
+        Nits::new_positive(4000.0).unwrap(),
+        Nits::new_positive(100.0).unwrap(),
+    );
+    assert_eq!(mapper.source_peak().nits(), 4000.0);
+    assert_eq!(mapper.target_peak().nits(), 100.0);
     assert_eq!(mapper.baked_peaks(), Some((4000.0, 100.0)));
+    assert_eq!(mapper.requirements(), Requirements::NONE);
+
+    let managed: Bt2446APipelineManaged = Bt2446A::pipeline_managed();
+    assert_eq!(managed.baked_peaks(), None);
+    assert_eq!(managed.requirements(), Requirements::SOURCE_PEAK_ONLY);
 
     // Tiny peak < 1e-3 must fail cleanly rather than producing NaN.
     let source_format = PixelFormat::new(SampleLayout::RGBF32, ColorSpace::BT2100_PQ);
-    let tiny_pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
+    let tiny_pol =
+        ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap());
     assert!(
         RowPlan::build(
             source_format.clone(),
             PixelFormat::RGBF32_LINEAR,
             &tiny_pol,
-            Some(Nits::new(1e-6).unwrap()),
+            Some(Nits::new_positive(1e-6).unwrap()),
         )
         .is_err(),
         "tiny source peak 1e-6 nits must be rejected cleanly"
@@ -670,7 +682,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: p3_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Straight,
             intent: RenderingIntent::Perceptual,
         },
@@ -703,7 +715,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: p3_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Premultiplied,
             intent: RenderingIntent::Perceptual,
         },
@@ -730,7 +742,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: p3_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Opaque,
             intent: RenderingIntent::Perceptual,
         },
@@ -767,7 +779,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: dci_p3_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::AbsoluteColorimetric,
         },
@@ -776,7 +788,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: dci_p3_icc,
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -785,7 +797,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: p3_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -892,7 +904,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
             SampleLayout::RGB8,
             ColorSpace::Icc {
                 profile: dual_arc.clone(),
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::Perceptual,
             },
@@ -907,7 +919,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
             SampleLayout::RGB8,
             ColorSpace::Icc {
                 profile: dual_arc,
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             },
@@ -939,7 +951,7 @@ fn cms_policy_lossless_alpha_gate_intent_opaque_and_moxcms_gray_srgb() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: p3_icc,
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -977,7 +989,11 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
         .with_color(ColorSpace::SRGB)
         .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     assert!(
-        reconstruct_planar_f32(&planar).is_err(),
+        reconstruct_planar_f32(
+            &planar,
+            &zenpixels_convert::PlanarReconstructionOptions::nearest()
+        )
+        .is_err(),
         "YCbCr must reject unsupported F32 Cr plane"
     );
 
@@ -1025,7 +1041,11 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
         .unwrap()
         .with_color(srgb_narrow_alpha.clone())
         .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
-    let rgba_out = reconstruct_planar_f32(&planar_alpha).unwrap();
+    let rgba_out = reconstruct_planar_f32(
+        &planar_alpha,
+        &zenpixels_convert::PlanarReconstructionOptions::nearest(),
+    )
+    .unwrap();
     assert_eq!(rgba_out.format().layout, SampleLayout::RGBAF32);
     assert_eq!(rgba_out.format().color.alpha(), AlphaMode::Straight);
     let px_a = rgba_out.as_view().row_as::<f32>(0).unwrap();
@@ -1044,7 +1064,11 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
         .with_color(srgb_narrow_alpha)
         .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
     assert!(
-        reconstruct_planar_f32(&planar_gm).is_err(),
+        reconstruct_planar_f32(
+            &planar_gm,
+            &zenpixels_convert::PlanarReconstructionOptions::nearest()
+        )
+        .is_err(),
         "YCbCr must reject PlaneRole::GainMap rather than silently dropping it"
     );
 
@@ -1126,7 +1150,7 @@ fn ycbcr_gainmap_and_orient_safety_regressions() {
         )
         .unwrap();
         let untagged_1 = ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         };
         let rev_gm = PixelBuf::from_typed(
@@ -1484,7 +1508,7 @@ fn prefreeze_audit_signaling_lossless_negotiate_facts_xyz_gamma_regressions() {
             SampleLayout::RGB8,
             ColorSpace::Icc {
                 profile: p3_icc,
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             },

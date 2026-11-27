@@ -195,8 +195,8 @@ fn run(v: &Value) -> Result<Value, String> {
                     .ok_or_else(|| format!("{key} must be positive and finite"))?;
                 policy = policy.with_sdr_white(white);
             } else {
-                let nits =
-                    Nits::new(value).ok_or_else(|| format!("{key} must be positive and finite"))?;
+                let nits = Nits::new_positive(value)
+                    .ok_or_else(|| format!("{key} must be positive and finite"))?;
                 if destination == 1 {
                     hdr_peak = Some(nits);
                 } else {
@@ -212,10 +212,14 @@ fn run(v: &Value) -> Result<Value, String> {
                 .map(|n| n as f32)
                 .ok_or_else(|| format!("Missing HLG {name}"))
         };
-        let peak = Nits::new(number("peak")?).ok_or("HLG peak must be finite and positive")?;
-        let rendering = HlgRendering::new(peak, number("black")?, number("gamma")?).ok_or(
-            "HLG black must be 0..=1% of peak; gamma must be 0.5..=3; values must be finite",
-        )?;
+        let peak =
+            Nits::new_positive(number("peak")?).ok_or("HLG peak must be finite and positive")?;
+        let rendering = HlgRendering::new(zenpixels_convert::HlgRenderingParams {
+            peak,
+            black_nits: number("black")?,
+            system_gamma: number("gamma")?,
+        })
+        .ok_or("HLG black must be 0..=1% of peak; gamma must be 0.5..=3; values must be finite")?;
         policy = policy.with_hlg_rendering(rendering);
     }
     let row_plan = RowPlan::build(from, to.clone(), &policy, hdr_peak)

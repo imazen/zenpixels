@@ -307,6 +307,46 @@ pub struct IccIdentification {
     pub valid_use: IdentificationUse,
 }
 
+/// Tolerance tier for [`IccIdentification::from_icc_for_intent`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IccMatchTolerance {
+    /// Strict ±1 `u16` TRC tolerance (parametric v4 profiles).
+    Exact,
+    /// Intent-aware tolerance (±56 `u16` TRC tolerance for safe matrix+TRC substitution).
+    Intent,
+}
+
+/// Pair of normalized ICC fingerprints returned by [`normalized_hash`].
+///
+/// Combines FNV-1a64 and MurmurHash3_x86_32 (seed `3_242_157_231`, explicit little-endian
+/// words on every target) over the profile with non-colorimetric metadata header fields zeroed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IccFingerprint {
+    /// 64-bit FNV-1a hash of the normalized profile bytes.
+    pub fnv1a64: u64,
+    /// 32-bit MurmurHash3_x86_32 (seed `3_242_157_231`) of the normalized profile bytes.
+    pub murmur3_32: u32,
+}
+
+impl IccFingerprint {
+    /// Construct a fingerprint from its `(fnv1a64, murmur3_32)` components.
+    #[inline]
+    #[must_use]
+    pub const fn new(fnv1a64: u64, murmur3_32: u32) -> Self {
+        Self {
+            fnv1a64,
+            murmur3_32,
+        }
+    }
+
+    /// Return the raw `(fnv1a64, murmur3_32)` pair.
+    #[inline]
+    #[must_use]
+    pub const fn to_pair(self) -> (u64, u32) {
+        (self.fnv1a64, self.murmur3_32)
+    }
+}
+
 /// What operations an [`IccIdentification`] supports.
 ///
 /// Always check this before deciding whether to skip a CMS — a profile
@@ -348,18 +388,16 @@ impl IccIdentification {
     }
 
     /// Recognize `icc_bytes` when matrix+TRC substitution is safe for the
-    /// requested [`RenderingIntent`](crate::RenderingIntent).
+    /// requested [`RenderingIntent`](crate::RenderingIntent) at `tolerance`.
     ///
     /// Always returns `None` for
     /// [`RenderingIntent::AbsoluteColorimetric`](crate::RenderingIntent::AbsoluteColorimetric)
     /// because D50-adapted relative matrix math cannot undo D65→D50 adaptation.
-    /// When `exact_only` is `true`, only entries within ±1 u16 TRC tolerance
-    /// (parametric v4 profiles) match.
     #[must_use]
     pub fn from_icc_for_intent(
         icc_bytes: &[u8],
         intent: crate::RenderingIntent,
-        exact_only: bool,
+        tolerance: IccMatchTolerance,
     ) -> Option<Self> {
         let use_for = match intent {
             crate::RenderingIntent::Perceptual => CoalesceForUse::Perceptual,
@@ -367,10 +405,9 @@ impl IccIdentification {
             crate::RenderingIntent::Saturation => CoalesceForUse::Saturation,
             crate::RenderingIntent::AbsoluteColorimetric => CoalesceForUse::AbsoluteColorimetric,
         };
-        let tol = if exact_only {
-            Tolerance::Exact
-        } else {
-            Tolerance::Intent
+        let tol = match tolerance {
+            IccMatchTolerance::Exact => Tolerance::Exact,
+            IccMatchTolerance::Intent => Tolerance::Intent,
         };
         identify_common_for(icc_bytes, tol, use_for)
     }
@@ -534,7 +571,7 @@ pub(crate) fn identify_common(icc_bytes: &[u8]) -> Option<IccIdentification> {
 /// [`IccIdentification::is_common_srgb`]) to dead-strip the metadata-only table.
 #[inline(never)]
 pub(crate) fn identify_substitutable(icc_bytes: &[u8]) -> Option<IccIdentification> {
-    let hash = normalized_hash(icc_bytes);
+    let hash = normalized_hash(icc_bytes).to_pair();
     let meta = lookup_substitutable_hash(hash)?;
     if unpack_err(meta) <= Tolerance::Intent as u8 && unpack_mask(meta) == Safe::AnyIntent {
         Some(IccIdentification::new(
@@ -549,7 +586,7 @@ pub(crate) fn identify_substitutable(icc_bytes: &[u8]) -> Option<IccIdentificati
 
 /// Internal identification with configurable tolerance.
 fn identify_common_at(icc_bytes: &[u8], tolerance: Tolerance) -> Option<IccIdentification> {
-    let hash = normalized_hash(icc_bytes);
+    let hash = normalized_hash(icc_bytes).to_pair();
     let meta = lookup_substitutable_hash(hash).or_else(|| lookup_metadata_only_hash(hash))?;
     if unpack_err(meta) <= tolerance as u8 {
         Some(IccIdentification::new(
@@ -599,7 +636,7 @@ pub(crate) fn identify_common_for(
     if matches!(use_for, CoalesceForUse::AbsoluteColorimetric) {
         return None;
     }
-    let hash = normalized_hash(icc_bytes);
+    let hash = normalized_hash(icc_bytes).to_pair();
     let required = use_for.required_mask();
 
     // Metadata-only entries have intent_mask == 0 and can never satisfy a
@@ -667,7 +704,7 @@ mod murmur3_tests;
 /// Bytes outside the listed header fields (including every tag) are hashed.
 /// Matching a table's approximate color identification does not make profiles
 /// interchangeable without a pixel conversion.
-pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
+pub const fn normalized_hash(data: &[u8]) -> IccFingerprint {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash = FNV_OFFSET;
@@ -705,7 +742,10 @@ pub const fn normalized_hash(data: &[u8]) -> (u64, u32) {
         state.update(data.split_at(header_len).1);
         state.digest()
     };
-    (hash, murmur)
+    IccFingerprint {
+        fnv1a64: hash,
+        murmur3_32: murmur,
+    }
 }
 
 /// Compare every byte except the metadata-only header fields ignored by
@@ -1253,7 +1293,7 @@ mod tests {
         for (i, slot) in fixture.iter_mut().enumerate() {
             *slot = (i.wrapping_mul(37).wrapping_add(11)) as u8;
         }
-        const EXPECTED: (u64, u32) = (0x63a0_c773_7e54_3275, 0x103a_ebf3);
+        const EXPECTED: IccFingerprint = IccFingerprint::new(0x63a0_c773_7e54_3275, 0x103a_ebf3);
         assert_eq!(normalized_hash(&fixture), EXPECTED);
 
         // Editing an allowed metadata header byte (creation date byte 30) keeps the pair identical.

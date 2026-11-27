@@ -9,10 +9,11 @@ use alloc::sync::Arc;
 #[cfg(feature = "icc")]
 use zenpixels::IccColorSpace;
 use zenpixels::{
-    AlignedSamples, AlphaMode, BandedBuf, BitPacking, ColorSpace, DualLayerHdrBuf, GainMapMetadata,
-    HdrMetadata, HlgMode, PixelBuf, PixelFormat, PixelSink, PixelSource, PixelStorage, PlanarBuf,
-    PlanarView, PlaneBuf, PlaneFormat, PlaneRole, PlaneView, RenderingIntent, SampleFacts,
-    SampleLayout, SampleType, SignalRange, Transfer,
+    AlignedSamples, AlphaMode, BandSizing, BandedBuf, BitPacking, ColorSpace, DualLayerHdrBuf,
+    ExactDepth, F16Sample, FloatFacts, GainMapMetadata, HdrMetadata, HlgMode, PixelBuf,
+    PixelFormat, PixelSink, PixelSource, PixelStorage, PlanarBuf, PlanarView, PlaneBuf,
+    PlaneFormat, PlaneRole, PlaneView, RenderingIntent, SampleFacts, SampleLayout, SampleType,
+    SignalRange, Transfer,
 };
 
 #[test]
@@ -159,10 +160,16 @@ fn pixel_buf_sink_row_mut_panics_out_of_bounds_even_with_trailing_capacity() {
 
 #[test]
 fn banded_buf_rejects_zero_band_bytes_and_tracks_facts_across_child_bands() {
-    assert!(BandedBuf::new(4, 4, PixelFormat::RGBA8_SRGB, 0).is_err());
+    assert!(BandedBuf::new(4, 4, PixelFormat::RGBA8_SRGB, BandSizing::MaxBandBytes(0)).is_err());
+    assert!(BandedBuf::new(4, 4, PixelFormat::RGBA8_SRGB, BandSizing::RowsPerBand(0)).is_err());
 
-    let mut banded = BandedBuf::new(4, 4, PixelFormat::RGBA8_SRGB, 32).unwrap();
+    let mut banded =
+        BandedBuf::new(4, 4, PixelFormat::RGBA8_SRGB, BandSizing::MaxBandBytes(32)).unwrap();
     assert!(banded.bands().len() >= 2);
+    let fixed_rows =
+        BandedBuf::new(4, 5, PixelFormat::RGBA8_SRGB, BandSizing::RowsPerBand(2)).unwrap();
+    assert_eq!(fixed_rows.rows_per_band(), 2);
+    assert_eq!(fixed_rows.band_count(), 3);
 
     // Attach facts via sink_finish -> propagates to parent AND child bands.
     let facts = SampleFacts::NONE.with_all_opaque(true);
@@ -250,7 +257,7 @@ fn image_spec_validate_rejects_hlg_display_on_gray_and_icc_signature_mismatch() 
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::from(truncated_icc.as_slice()),
-            channels: 1,
+            color_channels: 1,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -265,7 +272,7 @@ fn image_spec_validate_rejects_hlg_display_on_gray_and_icc_signature_mismatch() 
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(gray_icc.as_slice()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -280,7 +287,7 @@ fn image_spec_validate_rejects_hlg_display_on_gray_and_icc_signature_mismatch() 
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::from(gray_icc.as_slice()),
-            channels: 1,
+            color_channels: 1,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -296,7 +303,7 @@ fn icc_from_icc_for_intent_rejects_absolute_colorimetric() {
         zenpixels::icc::IccIdentification::from_icc_for_intent(
             &fake_icc,
             RenderingIntent::AbsoluteColorimetric,
-            false,
+            zenpixels::icc::IccMatchTolerance::Intent,
         )
         .is_none()
     );
@@ -314,13 +321,13 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     let untagged_gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
     let valid_base = PixelBuf::new(4, 4, PixelFormat::RGB8_SRGB).unwrap();
     let valid_gm = PixelBuf::new(2, 2, untagged_gm_spec.clone()).unwrap();
-    let valid_meta = GainMapMetadata::symmetric_stops(2.0).unwrap();
+    let valid_meta = GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap();
     let hdr = DualLayerHdrBuf::new(valid_base, valid_gm, valid_meta)
         .unwrap()
         .with_orientation(Orientation::Rotate90);
@@ -344,7 +351,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         DualLayerHdrBuf::new(
             cmyk_base,
             ok_gm,
-            GainMapMetadata::symmetric_stops(2.0).unwrap()
+            GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap()
         )
         .is_err()
     );
@@ -355,7 +362,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         DualLayerHdrBuf::new(
             ok_base,
             srgb_gm,
-            GainMapMetadata::symmetric_stops(2.0).unwrap()
+            GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap()
         )
         .is_err(),
         "ISO 21496-1 gain map must be ColorSpace::Untagged (numeric, no transfer curve)"
@@ -368,7 +375,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         PixelFormat::new(
             SampleLayout::RGB565,
             ColorSpace::Untagged {
-                channels: 3,
+                total_channels: 3,
                 alpha: AlphaMode::None,
             },
         ),
@@ -378,7 +385,7 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
         DualLayerHdrBuf::new(
             ok_base2,
             rgb565_gm,
-            GainMapMetadata::symmetric_stops(2.0).unwrap()
+            GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap()
         )
         .is_err()
     );
@@ -438,7 +445,9 @@ fn dual_layer_hdr_and_planes_enforce_invariants() {
     // DCI-P3 (CICP CP 11) vs Display P3 (CICP CP 12) + Bradford adaptation + CustomPrimaries + Gamma + XYZ.
     assert_eq!(Primaries::DciP3.to_cicp(), Some(11));
     assert_eq!(Primaries::DisplayP3.to_cicp(), Some(12));
-    assert_eq!(Cicp::DCI_P3.color_primaries, 11);
+    assert_eq!(Cicp::DCI_P3_SRGB.color_primaries, 11);
+    assert_eq!(Cicp::DCI_P3_CINEMA.color_primaries, 11);
+    assert_eq!(Cicp::DCI_P3_CINEMA.transfer_characteristics, 17);
     let dci_to_srgb = Primaries::DciP3.gamut_matrix_to(Primaries::Bt709).unwrap();
     let dp3_to_srgb = Primaries::DisplayP3
         .gamut_matrix_to(Primaries::Bt709)
@@ -554,8 +563,82 @@ fn image_crate_interop_propagates_p3_cicp_and_rejects_mismatches() {
     // from_rgb8_image preserves Display P3!
     let roundtripped = PixelBuf::from_rgb8_image(img).unwrap();
     assert_eq!(
-        roundtripped.format().color.to_cicp(),
+        roundtripped.format().color.to_cicp_lossy(),
         Some(zenpixels::Cicp::DISPLAY_P3)
     );
     assert_eq!(roundtripped.as_view().row(0), &[255, 0, 0, 0, 255, 0]);
+
+    // from_dynamic_image_with_color overrides untagged sRGB default on Rgb32F.
+    let dyn_f32 = image::DynamicImage::ImageRgb32F(image::ImageBuffer::from_pixel(
+        1,
+        1,
+        image::Rgb([0.5f32, 0.25, 0.125]),
+    ));
+    let linear_f32 =
+        PixelBuf::from_dynamic_image_with_color(dyn_f32, ColorSpace::LINEAR_SRGB).unwrap();
+    assert_eq!(linear_f32.format().color, ColorSpace::LINEAR_SRGB);
+}
+
+#[test]
+fn stage_c_float_facts_f16_and_exact_depth_helpers() {
+    // Subnormal f32 in [0, 1] satisfies UNIT_INTERVAL, NOT NORMAL_UNIT_INTERVAL.
+    let subnormal_f32 = f32::from_bits(1);
+    let ff = FloatFacts::measure_f32_slice(&[0.0, subnormal_f32, 0.5, 1.0]);
+    assert!(ff.is_unit_interval());
+    assert!(!ff.is_normal_unit_interval());
+    assert!(!ff.contains(FloatFacts::NO_SUBNORMALS));
+
+    // Normal f32 in [0, 1] satisfies BOTH UNIT_INTERVAL and NORMAL_UNIT_INTERVAL.
+    let ff_norm = FloatFacts::measure_f32_slice(&[0.0, 0.5, 1.0]);
+    assert!(ff_norm.is_unit_interval());
+    assert!(ff_norm.is_normal_unit_interval());
+
+    // F16 measure_float_facts classifies normal, subnormal, >1.0, and NaN accurately.
+    let f16_sub = F16Sample::from_bits(0x0001); // smallest positive f16 subnormal
+    let f16_buf_sub = PixelBuf::from_typed(
+        vec![F16Sample::ZERO, f16_sub, F16Sample::ONE],
+        1,
+        1,
+        PixelFormat::RGBF16_LINEAR,
+    )
+    .unwrap();
+    let f16_sub_facts = f16_buf_sub.as_view().measure_float_facts();
+    assert!(f16_sub_facts.is_unit_interval());
+    assert!(!f16_sub_facts.is_normal_unit_interval());
+
+    let f16_buf_norm = PixelBuf::from_typed(
+        vec![F16Sample::ZERO, F16Sample::from_f32(0.5), F16Sample::ONE],
+        1,
+        1,
+        PixelFormat::RGBF16_LINEAR,
+    )
+    .unwrap();
+    assert!(
+        f16_buf_norm
+            .as_view()
+            .measure_float_facts()
+            .is_normal_unit_interval()
+    );
+
+    let f16_nan = PixelBuf::from_typed(
+        vec![
+            F16Sample::from_bits(0x7E00),
+            F16Sample::ZERO,
+            F16Sample::ONE,
+        ],
+        1,
+        1,
+        PixelFormat::RGBF16_LINEAR,
+    )
+    .unwrap();
+    assert!(!f16_nan.as_view().measure_float_facts().is_finite());
+
+    // ExactDepth::new_opaque + SampleFacts::is_color_exact_at
+    let d8 = ExactDepth::new_opaque(SampleType::U16, SignalRange::Full, 8).unwrap();
+    assert_eq!(d8.color_bits(), 8);
+    assert_eq!(d8.alpha_bits(), 16); // matches ExactDepth::measure on alpha-free U16 formats
+    let sf = SampleFacts::NONE.with_depth(Some(d8));
+    assert!(sf.is_color_exact_at(8));
+    assert!(!sf.is_color_exact_at(4));
+    assert!(!SampleFacts::NONE.is_color_exact_at(8));
 }

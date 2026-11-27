@@ -13,13 +13,13 @@ This is the **0.5.0 greenfield candidate**. Start with the
 
 | Need | API |
 |---|---|
-| Quick 8-bit sRGB output | `to_rgb8(&view)`, `to_gray8(&view)` (refuse unproven alpha discard), `to_rgba8(&view)`, `to_bgra8(&view)` |
+| Quick 8-bit sRGB output | `to_rgb8_if_opaque(&view)`, `to_gray8_if_opaque(&view)` (refuse unproven alpha discard), `to_rgba8(&view)`, `to_bgra8(&view)` |
 | One-shot image conversion | `convert_to_buf(&view, destination_format, &policy)` / `convert_into(&src, &mut dst, &policy)` (add `_with_peak` for explicit `PeakSource`) |
 | Reusable whole-image plan (`PixelBuf` / `PixelView` / `BandedBuf`) | `ImagePlan::build(src, dst, &policy, peak)` → `.execute(&src)` / `.execute_into(&src, &mut dst)` |
 | Streaming row loop (zero per-row heap scratch) | `RowPlan::build(src, dst, &policy, resolved_source_peak)` → `.convert_row(src_row, dst_row, width_pixels)` (or `.convert_row_at(row_index, ...)` for ordered dithering) |
-| Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &mut dst, &opts)` / `reconstruct_planar_f32(&planar)` |
+| Planar YCbCr / GBR / RGB / monochrome reconstruction | `reconstruct_planar_to_buf(&planar, layout, &opts)` / `reconstruct_planar_into(&planar, &mut dst, &opts)` / `reconstruct_planar_f32(&planar, &opts)` |
 | ISO 21496-1 / UltraHDR gain maps (`gainmap` module) | `gainmap::apply_gain_map_with`, `gainmap::apply_gain_map_oriented`, `gainmap::extract_gain_map_only`, `gainmap::GainMapApplier`, `gainmap::GainMapRowExtractor` |
-| Content compaction (alpha, chroma, U16→U8) | `analyze_compaction(&view)`, `compact_to_buf(&view)`, `compact_in_place(&mut buf, mode)` |
+| Content compaction (alpha, chroma, U16→U8) | `analyze_compaction(&view)`, `compact_to_buf(&view)`, `compact_in_place(&mut buf, mode)?` |
 | Encoder negotiation + CICP/ICC signaling | `adapt_for_encode_parametric(view, origin, &[ParametricFormat], &policy, peak, signaling)` or reusable `OutputPlan::build(...)` |
 
 ## Quick start
@@ -97,8 +97,8 @@ per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
   forces CMS execution).
 - **Content compaction (`compact`):** `analyze_compaction(&view)` returns
   `CompactionReport { requires_alpha, requires_chroma, requires_u16_precision }`,
-  with `compact_to_buf(&view)` and zero-reallocation
-  `compact_in_place(&mut buf, AlphaCompaction::RetagOpaque | DropUnusedLanes)`.
+  with `compact_to_buf(&view)` and fallible zero-reallocation
+  `compact_in_place(&mut buf, AlphaCompaction::RetagOpaque | DropUnusedLanes)?`.
 - **Encoder signaling (`OutputPlan` & `EncodeReady`):** validates destination
   signaling eagerly (`OutputSignaling::{Auto, SameAsOrigin, CicpOnly, EmbedIcc, CustomIcc, Strip}`),
   refuses `HlgMode::Display` on `dst` under `CicpOnly`/`Auto`, and stays
@@ -117,7 +117,7 @@ per-policy via `ConvertPolicy::with_accelerators(Accelerators::ALL)`.
 | `bt2446a` | Built-in ITU-R BT.2446 Method A HDR→SDR tone mapper |
 | `icc-db` | Committed LZ4-compressed CICP→ICC profile bundle |
 | `cms-moxcms`, `cms-lcms` | Pure-Rust `MoxCms` and `Lcms` ICC CMS backends |
-| `fast` | Default-off (binaries only); defaults plans to `Accelerators::ALL` |
+| `fast` | Default-off (binaries only); defaults plans to `Accelerators::ROW_PIPELINE` (all row-pipeline SIMD without gainmap bloat) |
 | `avx512` | Opt-in AVX-512F F16C & vector tiers |
 | `precise-portable` | Portable bit-exact FMA on strict WASM engines |
 | `rgb`, `imgref` | Core `PixelType` and `imgref` interop |

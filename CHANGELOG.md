@@ -31,12 +31,14 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     plus `compact` / `gainmap` / `Lcms` non-D65 white-point support),
     exact `0.0001 cd/m²` `ClliCodes`, and ISO 15076-1 structural ICC validation
     (`validate_icc_structure` / `IccValidationError`) wired into `PixelFormat::validate()`.
-  - `PixelBuf` (with direct `row`/`row_mut`, fallible `into_tight_buf`, O(1)
+  - `PixelBuf` (with direct `row`/`row_mut`, fallible `into_tight_rows`, O(1)
     zero-copy `into_crop`, symmetric `crop_view`/`crop_view_mut`/`sub_rows`/
     `sub_rows_mut` with fallible CoW on mutable crops, `new_for_interop`, explicit
-    `relabel_color`/`relabel_format`/`reinterpret_bytes`, and `assume_facts`),
+    `relabel_color`/`relabel_format`/`reinterpret_bytes`, `swizzle_in_place` /
+    `drop_unused_lane_in_place`, and `assume_facts`),
     `PixelView`, `PixelViewMut`, `PixelCow`, `BandedBuf` (gigapixel row-banded
-    storage with `RowAlign`), `PlaneBuf`, `PlaneView`, `PlaneViewMut`, `PlanarBuf`,
+    storage with `BandSizing::{MaxBandBytes, RowsPerBand}` and `RowAlign`),
+    `PlaneBuf`, `PlaneView`, `PlaneViewMut`, `PlanarBuf`,
     `PlanarView`, and `PlanarViewMut` (symmetric `crop_view`/`crop_view_mut`/
     `crop`/`crop_mut`/`into_crop`/`sub_rows*` across carriers) carrying pending
     `Orientation`, `HdrMetadata` (`Option<Arc<HdrMetadata>>`, zero-alloc when empty),
@@ -48,14 +50,16 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), explicit `PixelRect`
     crops, `stride_bytes()` / `byte_offset()` / `height()` unit-explicit accessors,
     `BandRowLocation`, `InPlaceTransformInput` / `InPlaceTransformOutput`,
-    `InterleavedCodeLayout`, fallible `Nits::new` / `DiffuseWhite::new` /
-    `GainMapMetadata::symmetric_stops` (with const `*_or_panic`),
-    `ExactDepth::{intersect_same_buffer, union_disjoint_regions}`, descriptive
+    `InterleavedCodeLayout`, fallible `Nits::new_positive` / `DiffuseWhite::new` /
+    `GainMapMetadata::sdr_to_hdr_stops` (with const `*_or_panic`),
+    `ExactDepth::{new_opaque, intersect_same_buffer, union_disjoint_regions}`,
+    `HlgRenderingParams`, `IccFingerprint`, `IccMatchTolerance`,
+    `Bt2446APipelineManaged`, `LinearInputChannels`, descriptive
     `whereat::At` context on `BufferError::IncompatibleLayout` element mismatches,
     and top-level `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
   - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,
-    `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_zeroed` /
-    `new_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with
+    `PixelBuf::new_white`, `PixelBuf::new_with_fill`, `PixelBuf::new_raw_zeroed` /
+    `new_raw_zeroed_aligned` (refusing `AlphaMode::Opaque` on alpha-bearing layouts with
     `BufferError::UnverifiedOpaqueAlpha`), `into_opaque_verified`, `into_opaque_filled`,
     `assume_opaque`, and recovery constructors `from_bytes_recover` /
     `from_typed_recover` / `from_parts_recover`.
@@ -79,13 +83,14 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     `PlaneBuf::from_external`, and `PlaneBuf::from_external_mut` allow codecs,
     FFI buffers, `Arc<[u8]>`, `Box<[T]>`, `Vec<T>`, `mmap` regions, and pooled
     arenas to move directly into `PixelBuf` / `PlaneBuf` with zero copies and
-    fallible copy-on-write (`make_mut`, `try_as_view_mut`).
+    fallible copy-on-write (`make_mut`, `try_make_view_mut`).
 - **Symmetric zero-copy interop:**
   - `imgref` feature: `PixelView::as_imgref`, `PixelViewMut::as_imgref_mut`,
     `PixelBuf::from_imgvec` / `into_imgvec` / `into_imgvec_zero_copy`,
     `PixelView::from_imgref`, and `PixelViewMut::from_imgref_mut`.
   - `image` feature (`image 0.25`): `PixelBuf::from_dynamic_image` /
-    `from_image_buffer` / `from_rgb8_image_with_color` / `from_rgba8_image_with_color` /
+    `from_dynamic_image_with_color` / `from_image_buffer` /
+    `from_rgb8_image_with_color` / `from_rgba8_image_with_color` /
     `into_dynamic_image` / `into_image_buffer`.
 - **Portable content hashing (`hash` feature):**
   - Endian- and stride-independent XXH3-64 digests (`xxhash-rust`) on `PixelView`,

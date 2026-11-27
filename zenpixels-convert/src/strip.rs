@@ -910,7 +910,7 @@ impl ByteFastPath {
                             } else {
                                 read_word_u32(src_sample, &src[sb + c * s_sz..])
                             };
-                            src_packing.extract_code(src_sample, w, c)
+                            src_packing.extract_code(src_sample, c, w)
                         };
                         let packed = dst_packing.pack_code(dst_sample, c, code);
                         if d_packed {
@@ -950,7 +950,7 @@ impl ByteFastPath {
                     let db = x * d_bpp;
                     for c in 0..color_ch {
                         let w = read_word_u32(src_sample, &src[sb + c * s_sz..]);
-                        let q = src_packing.extract_code(src_sample, w, c);
+                        let q = src_packing.extract_code(src_sample, c, w);
                         let out_q = if dst_bits > src_bits {
                             q << (dst_bits - src_bits)
                         } else {
@@ -970,7 +970,7 @@ impl ByteFastPath {
                             dst_max
                         } else {
                             let w = read_word_u32(src_sample, &src[sb + c * s_sz..]);
-                            let a = u64::from(src_packing.extract_code(src_sample, w, c));
+                            let a = u64::from(src_packing.extract_code(src_sample, c, w));
                             if round {
                                 ((a * dst_max64 + src_max / 2) / src_max) as u32
                             } else {
@@ -1836,14 +1836,14 @@ pub(crate) enum MicroOp {
     RgbToPerceptual {
         space: PerceptualSpace,
         primaries: Primaries,
-        white_nits: f32,
+        diffuse_white: zenpixels::DiffuseWhite,
     },
     /// Perceptual/cylindrical space → linear RGB (in `primaries`).
     #[cfg(feature = "perceptual")]
     PerceptualToRgb {
         space: PerceptualSpace,
         primaries: Primaries,
-        white_nits: f32,
+        diffuse_white: zenpixels::DiffuseWhite,
     },
     /// HDR → SDR tone mapping on linear working-primary RGB.
     ToneMap {
@@ -2065,7 +2065,7 @@ fn unpack_strip_scalar(
             let mut vals = [0.0f32; 4];
             vals[3] = 1.0;
             for c in 0..ch {
-                let code = layout.packing.extract_code(layout.sample, word, c);
+                let code = layout.packing.extract_code(layout.sample, c, word);
                 let max = layout.packing.max_code(layout.sample, c).max(1);
                 vals[c] = (code as f32) / (max as f32);
             }
@@ -2087,7 +2087,7 @@ fn unpack_strip_scalar(
             vals[3] = 1.0;
             for c in 0..ch {
                 let w = read_word_u32(layout.sample, &src[base + c * sz..]);
-                let code = layout.packing.extract_code(layout.sample, w, c);
+                let code = layout.packing.extract_code(layout.sample, c, w);
                 vals[c] = (code as f32) * inv;
             }
             store_ordered(layout.order, vals, strip, i);
@@ -2417,14 +2417,14 @@ fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accele
         MicroOp::RgbToPerceptual {
             space,
             primaries,
-            white_nits,
+            diffuse_white,
         } => {
             for i in 0..len {
                 let out = crate::perceptual::linear_rgb_to_perceptual(
                     [strip.r[i], strip.g[i], strip.b[i]],
                     *primaries,
                     *space,
-                    *white_nits,
+                    *diffuse_white,
                 );
                 strip.r[i] = out[0];
                 strip.g[i] = out[1];
@@ -2435,14 +2435,14 @@ fn apply_micro_op(op: &MicroOp, strip: &mut StripBuf, len: usize, accel: &Accele
         MicroOp::PerceptualToRgb {
             space,
             primaries,
-            white_nits,
+            diffuse_white,
         } => {
             for i in 0..len {
                 let out = crate::perceptual::perceptual_to_linear_rgb(
                     [strip.r[i], strip.g[i], strip.b[i]],
                     *primaries,
                     *space,
-                    *white_nits,
+                    *diffuse_white,
                 );
                 strip.r[i] = out[0];
                 strip.g[i] = out[1];
@@ -3286,13 +3286,13 @@ pub(crate) fn detect_byte_fast_path(
         (
             ColorSpace::Icc {
                 profile: pa,
-                channels: ca,
+                color_channels: ca,
                 alpha: sa,
                 intent: ia,
             },
             ColorSpace::Icc {
                 profile: pb,
-                channels: cb,
+                color_channels: cb,
                 alpha: da,
                 intent: ib,
             },

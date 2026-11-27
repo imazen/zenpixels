@@ -118,11 +118,13 @@ impl Orientation {
         )
     }
 
-    /// Whether this can be applied per-row without buffering the full image.
+    /// Whether every row `y` stays at row index `y` (can be applied per-row without buffering
+    /// the full image).
     ///
-    /// Only [`Identity`](Self::Identity) and [`FlipH`](Self::FlipH) are
-    /// row-local — all other transforms require access to multiple rows.
-    pub const fn is_row_local(self) -> bool {
+    /// Only [`Identity`](Self::Identity) and [`FlipH`](Self::FlipH) keep row indices unchanged —
+    /// all other transforms permute rows or swap axes.
+    #[doc(alias = "is_row_local")]
+    pub const fn keeps_row_index(self) -> bool {
         matches!(self, Self::Identity | Self::FlipH)
     }
 
@@ -267,10 +269,10 @@ mod tests {
 
     #[test]
     fn row_local() {
-        assert!(Orientation::Identity.is_row_local());
-        assert!(Orientation::FlipH.is_row_local());
+        assert!(Orientation::Identity.keeps_row_index());
+        assert!(Orientation::FlipH.keeps_row_index());
         for &o in &Orientation::ALL[2..] {
-            assert!(!o.is_row_local(), "{o:?} should not be row-local");
+            assert!(!o.keeps_row_index(), "{o:?} should not keep row index");
         }
     }
 

@@ -353,9 +353,11 @@ fn validate_custom_icc_for_dst(
             sig == zenpixels::IccColorSpace::Cmyk && zenpixels::icc::normalized_eq(p, bytes)
         }
         ColorSpace::Icc {
-            profile, channels, ..
+            profile,
+            color_channels,
+            ..
         } => {
-            let expected_sig = match *channels {
+            let expected_sig = match *color_channels {
                 1 => Some(zenpixels::IccColorSpace::Gray),
                 3 => Some(zenpixels::IccColorSpace::Rgb),
                 4 => Some(zenpixels::IccColorSpace::Cmyk),
@@ -437,12 +439,12 @@ fn cicp_semantically_eq(a: Cicp, b: Cicp) -> bool {
 /// Check whether `orig_cicp` agrees with `dst_color` (including `ColorSpace::Icc` via embedded
 /// `cicp` tag or qualified `IccIdentification` — B12).
 fn origin_cicp_agrees(orig_cicp: Cicp, dst_color: &ColorSpace) -> bool {
-    if let Some(dst_cicp) = dst_color.to_cicp() {
+    if let Some(dst_cicp) = dst_color.to_cicp_lossy() {
         return cicp_semantically_eq(dst_cicp, orig_cicp);
     }
     if let ColorSpace::Icc {
         profile,
-        channels: 3,
+        color_channels: 3,
         ..
     } = dst_color
     {
@@ -490,7 +492,7 @@ fn resolve_output_signaling(
                 return Err(err_at(ConvertError::OutputSignalingUnavailable));
             }
             let cicp = dst_color
-                .to_cicp()
+                .to_cicp_lossy()
                 .ok_or_else(|| err_at(ConvertError::OutputSignalingUnavailable))?;
             Ok(ResolvedSignaling {
                 cicp: Some(cicp),
@@ -548,7 +550,7 @@ fn resolve_output_signaling(
                     ..
                 } => bundled_icc_for(*primaries, *transfer).or_else(|| {
                     dst_color
-                        .to_cicp()
+                        .to_cicp_lossy()
                         .and_then(|c| match SynthesizedIcc::for_cicp(c) {
                             SynthesizedIcc::Profile(b) => Some(b),
                             _ => None,
@@ -572,7 +574,7 @@ fn resolve_output_signaling(
             };
             let cicp = match dst_color {
                 ColorSpace::Icc { .. } | ColorSpace::Cmyk { .. } => None,
-                _ => dst_color.to_cicp(),
+                _ => dst_color.to_cicp_lossy(),
             };
             Ok(ResolvedSignaling {
                 cicp,
@@ -610,7 +612,7 @@ fn resolve_output_signaling(
                 if matches!(transfer, Transfer::Hlg(HlgMode::Display(_))) {
                     return Err(err_at(ConvertError::OutputSignalingUnavailable));
                 }
-                let cicp = dst_color.to_cicp();
+                let cicp = dst_color.to_cicp_lossy();
                 // ICC RGB profiles describe full-range sample codes; never attach them to narrow-range outputs.
                 let is_default_srgb = *primaries == Primaries::Bt709
                     && *transfer == Transfer::Srgb
@@ -657,7 +659,7 @@ fn resolve_output_signaling(
                     icc: Some(icc_bytes),
                 })
             }
-            _ => match dst_color.to_cicp() {
+            _ => match dst_color.to_cicp_lossy() {
                 Some(c) => Ok(ResolvedSignaling {
                     cicp: Some(c),
                     icc: None,

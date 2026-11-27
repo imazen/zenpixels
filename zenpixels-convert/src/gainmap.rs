@@ -2,7 +2,7 @@
 //! and extraction.
 //!
 //! Subsumes pure ISO 21496-1 pixel math in `no_std + alloc`, `#![forbid(unsafe_code)]`
-//! with **0-bit `Accelerators::ALL.with_gainmap() == Accelerators::SCALAR` parity** and
+//! with **0-bit `Accelerators::ALL == Accelerators::SCALAR` parity** and
 //! O(width) streaming memory:
 //!
 //! - **Direction-complete ISO 21496-1:** exact `i128` rational headroom ordering supports
@@ -1773,7 +1773,7 @@ fn decode_gm_row_planar(
                     let code = if full {
                         raw
                     } else {
-                        layout.packing.extract_code(SampleType::U8, raw, c)
+                        layout.packing.extract_code(SampleType::U8, c, raw)
                     };
                     (code as f32) * inv[c]
                 }
@@ -1782,7 +1782,7 @@ fn decode_gm_row_planar(
                     let code = if full {
                         raw
                     } else {
-                        layout.packing.extract_code(SampleType::U16, raw, c)
+                        layout.packing.extract_code(SampleType::U16, c, raw)
                     };
                     (code as f32) * inv[c]
                 }
@@ -1801,7 +1801,7 @@ fn validate_gain_map_spec(spec: &PixelFormat) -> Result<(), At<ConvertError>> {
     let ok_color = matches!(
         spec.color,
         ColorSpace::Untagged {
-            channels: 1 | 3,
+            total_channels: 1 | 3,
             alpha: AlphaMode::None,
         }
     );
@@ -2185,13 +2185,32 @@ impl GainMapExtractConfig {
         let spec = PixelFormat::new(
             layout,
             ColorSpace::Untagged {
-                channels: if self.multi_channel { 3 } else { 1 },
+                total_channels: if self.multi_channel { 3 } else { 1 },
                 alpha: AlphaMode::None,
             },
         );
         spec.validate().map_err(|e| err_at((*e.error()).into()))?;
         validate_gain_map_spec(&spec)?;
         Ok(spec)
+    }
+}
+
+/// Interleaved channel layout for linear `f32` row buffers passed to
+/// [`GainMapRowExtractor::encode_row_linear_f32`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LinearInputChannels {
+    /// 3-channel packed linear RGB (`[R, G, B, ...]`).
+    Rgb = 3,
+    /// 4-channel packed linear RGBA (`[R, G, B, A, ...]`; alpha lane is ignored).
+    Rgba = 4,
+}
+
+impl LinearInputChannels {
+    /// Number of `f32` elements per pixel (`3` or `4`).
+    #[inline]
+    #[must_use]
+    pub const fn stride(self) -> usize {
+        self as usize
     }
 }
 
@@ -2264,7 +2283,8 @@ impl GainMapRowExtractor {
         Self::new(config.to_metadata()?, app_primaries)
     }
 
-    /// Quantize one row of paired linear RGB(A) `f32` pixels (`input_channels` is `3` or `4`)
+    /// Quantize one row of paired linear RGB(A) `f32` pixels (`input_channels`:
+    /// [`LinearInputChannels::Rgb`] or [`LinearInputChannels::Rgba`])
     /// into packed gain-map sample bytes matching `gain_map_layout` (`U8` or `U16`,
     /// `Full`/`Lsb`/`Msb`, `Gray`/`Rgb`/`Generic(1|3)`).
     ///
@@ -2275,15 +2295,12 @@ impl GainMapRowExtractor {
         &mut self,
         base_linear: &[f32],
         alt_linear: &[f32],
-        input_channels: usize,
+        input_channels: LinearInputChannels,
         gain_map_layout: SampleLayout,
         dst_row: &mut [u8],
     ) -> Result<(), At<ConvertError>> {
-        let channels = input_channels;
+        let channels = input_channels.stride();
         let gm_layout = gain_map_layout;
-        if channels != 3 && channels != 4 {
-            return Err(err_at(ConvertError::UnsupportedRoute));
-        }
         #[allow(clippy::manual_is_multiple_of)]
         if base_linear.len() != alt_linear.len() || base_linear.len() % channels != 0 {
             return Err(err_at(ConvertError::DimensionMismatch));
@@ -2307,7 +2324,7 @@ impl GainMapRowExtractor {
         PixelFormat::new(
             gm_layout,
             ColorSpace::Untagged {
-                channels: gm_ch as u8,
+                total_channels: gm_ch as u8,
                 alpha: AlphaMode::None,
             },
         )
@@ -2605,7 +2622,7 @@ pub fn extract_gain_map(
         PixelFormat::new(
             SampleLayout::RGB8,
             ColorSpace::Untagged {
-                channels: 3,
+                total_channels: 3,
                 alpha: AlphaMode::None,
             },
         )
@@ -2613,7 +2630,7 @@ pub fn extract_gain_map(
         PixelFormat::new(
             SampleLayout::GRAY8,
             ColorSpace::Untagged {
-                channels: 1,
+                total_channels: 1,
                 alpha: AlphaMode::None,
             },
         )
@@ -2763,7 +2780,13 @@ fn extract_gain_map_internal(
             } else {
                 gm_v.row_mut(y)
             };
-            extractor.encode_row_linear_f32(&base_row, &alt_row, 3, gm_spec.layout, dst_slice)?;
+            extractor.encode_row_linear_f32(
+                &base_row,
+                &alt_row,
+                LinearInputChannels::Rgb,
+                gm_spec.layout,
+                dst_slice,
+            )?;
         }
         return Ok((gain_buf, extractor.observed_gain_stops()));
     }
@@ -2804,7 +2827,7 @@ fn extract_gain_map_internal(
                 extractor.encode_row_linear_f32(
                     &gm_base_row,
                     &gm_alt_row,
-                    3,
+                    LinearInputChannels::Rgb,
                     gm_spec.layout,
                     dst_slice,
                 )?;
@@ -2874,7 +2897,7 @@ fn extract_gain_map_internal(
                 extractor.encode_row_linear_f32(
                     &gm_base_row,
                     &gm_alt_row,
-                    3,
+                    LinearInputChannels::Rgb,
                     gm_spec.layout,
                     dst_slice,
                 )?;
@@ -2949,7 +2972,7 @@ fn extract_gain_map_internal(
                 extractor.encode_row_linear_f32(
                     &gm_base_row,
                     &gm_alt_row,
-                    3,
+                    LinearInputChannels::Rgb,
                     gm_spec.layout,
                     dst_slice,
                 )?;

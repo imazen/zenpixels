@@ -461,7 +461,7 @@ fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
             layout,
             ColorSpace::Icc {
                 profile: Arc::from(pq.as_ref()),
-                channels: channels as u8,
+                color_channels: channels as u8,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             },
@@ -470,7 +470,7 @@ fn exported_pq_dense_neutral_roundtrip_has_no_black_plateau() {
             layout,
             ColorSpace::Icc {
                 profile: Arc::from(linear.as_ref()),
-                channels: channels as u8,
+                color_channels: channels as u8,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             },

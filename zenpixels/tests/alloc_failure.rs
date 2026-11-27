@@ -6,8 +6,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use zenpixels::{
-    BandedBuf, BufferError, PixelBuf, PixelFormat, PixelRect, PlanarBuf, PlaneBuf, PlaneFormat,
-    PlaneRole, RowAlign, SampleType,
+    BandSizing, BandedBuf, BufferError, PixelBuf, PixelFormat, PixelRect, PlanarBuf, PlaneBuf,
+    PlaneFormat, PlaneRole, RowAlign, SampleType,
 };
 
 struct FailingAlloc;
@@ -73,7 +73,12 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
 
     // BandedBuf::new
     let err = with_oom_above(4096, || {
-        BandedBuf::new(64, 64, PixelFormat::RGBA8_SRGB, 8192)
+        BandedBuf::new(
+            64,
+            64,
+            PixelFormat::RGBA8_SRGB,
+            BandSizing::MaxBandBytes(8192),
+        )
     })
     .unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
@@ -126,7 +131,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     assert_eq!(*err.error(), BufferError::OutOfBounds);
     assert!(ext_buf.is_external());
 
-    // Padded external immutable storage `into_tight_buf` returns `AllocationFailed` cleanly on OOM!
+    // Padded external immutable storage `into_tight_rows` returns `AllocationFailed` cleanly on OOM!
     let padded_ext = PixelBuf::from_external(
         std::sync::Arc::<[u8]>::from(vec![0x42u8; 64 * 260].into_boxed_slice()),
         64,
@@ -135,10 +140,10 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
         PixelFormat::RGBA8_SRGB,
     )
     .unwrap();
-    let err = with_oom_above(4096, || padded_ext.into_tight_buf()).unwrap_err();
+    let err = with_oom_above(4096, || padded_ext.into_tight_rows()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-    // PlaneBuf::from_external CoW promotion (`try_as_view_mut`) on OOM leaves plane intact!
+    // PlaneBuf::from_external CoW promotion (`try_make_view_mut`) on OOM leaves plane intact!
     let mut ext_plane = PlaneBuf::from_external(
         std::sync::Arc::<[u8]>::from(vec![0x33u8; 128 * 64].into_boxed_slice()),
         128,
@@ -147,7 +152,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
         PlaneFormat::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
-    let err = with_oom_above(4096, || ext_plane.try_as_view_mut()).unwrap_err();
+    let err = with_oom_above(4096, || ext_plane.try_make_view_mut()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
     let err =
         with_oom_above(4096, || ext_plane.crop_view_mut(PixelRect::new(0, 0, 4, 4))).unwrap_err();
@@ -156,10 +161,13 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
 
     // BandedBuf::from_view and multi-band into_buf OOM paths
     let src_big = PixelBuf::new(64, 64, PixelFormat::RGBA8_SRGB).unwrap();
-    let err = with_oom_above(4096, || BandedBuf::from_view(&src_big.as_view(), 8192)).unwrap_err();
+    let err = with_oom_above(4096, || {
+        BandedBuf::from_view(&src_big.as_view(), BandSizing::MaxBandBytes(8192))
+    })
+    .unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-    let banded = BandedBuf::from_view(&src_big.as_view(), 4096).unwrap();
+    let banded = BandedBuf::from_view(&src_big.as_view(), BandSizing::MaxBandBytes(4096)).unwrap();
     assert!(banded.band_count() > 1);
     let err = with_oom_above(8192, || banded.into_buf()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);

@@ -4,11 +4,11 @@
 //! `PlanarBuf`, and `DualLayerHdrBuf`.
 
 use zenpixels::{
-    AlphaMode, BandedBuf, BitPacking, ChannelOrder, Cicp, CicpError, ColorError, ColorSpace,
-    DiffuseWhite, DualLayerHdrBuf, FloatFacts, GainMapMetadata, HlgMode, HlgRendering,
-    InteropTarget, Nits, PixelBuf, PixelFormat, PixelRect, PixelSink, PixelSource, PlanarBuf,
-    PlaneFormat, PlaneRole, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange,
-    Transfer,
+    AlphaMode, BandSizing, BandedBuf, BitPacking, ChannelOrder, Cicp, CicpError, ColorError,
+    ColorSpace, DiffuseWhite, DualLayerHdrBuf, FloatFacts, GainMapMetadata, HlgMode, HlgRendering,
+    HlgRenderingParams, InteropTarget, Nits, PixelBuf, PixelFormat, PixelRect, PixelSink,
+    PixelSource, PlanarBuf, PlaneFormat, PlaneRole, Primaries, SampleFacts, SampleLayout,
+    SampleType, SignalRange, Transfer,
 };
 
 #[test]
@@ -101,7 +101,7 @@ fn primaries_gamut_matrices_roundtrip_accurately() {
 fn cicp_maps_rgb_and_refuses_ycbcr_matrix() {
     let cs = Cicp::SRGB.to_color_space(AlphaMode::None).unwrap();
     assert_eq!(cs, ColorSpace::SRGB);
-    assert_eq!(cs.to_cicp(), Some(Cicp::SRGB));
+    assert_eq!(cs.to_cicp_lossy(), Some(Cicp::SRGB));
 
     let pq = Cicp::BT2100_PQ_RGB.to_color_space(AlphaMode::None).unwrap();
     assert_eq!(pq, ColorSpace::BT2100_PQ);
@@ -129,7 +129,7 @@ fn bit_packing_p010_u10_lsb_rgb565_and_rgb10a2() {
     let packed = BitPacking::P010.pack_code(SampleType::U16, 0, 512);
     assert_eq!(packed, 512 << 6);
     assert_eq!(
-        BitPacking::P010.extract_code(SampleType::U16, packed, 0),
+        BitPacking::P010.extract_code(SampleType::U16, 0, packed),
         512
     );
 
@@ -137,7 +137,7 @@ fn bit_packing_p010_u10_lsb_rgb565_and_rgb10a2() {
     let lsb = BitPacking::U10_LSB.pack_code(SampleType::U16, 0, 1023);
     assert_eq!(lsb, 1023);
     assert_eq!(
-        BitPacking::U10_LSB.extract_code(SampleType::U16, lsb, 0),
+        BitPacking::U10_LSB.extract_code(SampleType::U16, 0, lsb),
         1023
     );
 
@@ -147,15 +147,15 @@ fn bit_packing_p010_u10_lsb_rgb565_and_rgb10a2() {
     word565 |= BitPacking::RGB565.pack_code(SampleType::U16, 1, 42); // G=42
     word565 |= BitPacking::RGB565.pack_code(SampleType::U16, 2, 17); // B=17
     assert_eq!(
-        BitPacking::RGB565.extract_code(SampleType::U16, word565, 0),
+        BitPacking::RGB565.extract_code(SampleType::U16, 0, word565),
         31
     );
     assert_eq!(
-        BitPacking::RGB565.extract_code(SampleType::U16, word565, 1),
+        BitPacking::RGB565.extract_code(SampleType::U16, 1, word565),
         42
     );
     assert_eq!(
-        BitPacking::RGB565.extract_code(SampleType::U16, word565, 2),
+        BitPacking::RGB565.extract_code(SampleType::U16, 2, word565),
         17
     );
 
@@ -166,19 +166,19 @@ fn bit_packing_p010_u10_lsb_rgb565_and_rgb10a2() {
     word10 |= BitPacking::RGB10A2.pack_code(SampleType::U32, 2, 1023);
     word10 |= BitPacking::RGB10A2.pack_code(SampleType::U32, 3, 3);
     assert_eq!(
-        BitPacking::RGB10A2.extract_code(SampleType::U32, word10, 0),
+        BitPacking::RGB10A2.extract_code(SampleType::U32, 0, word10),
         700
     );
     assert_eq!(
-        BitPacking::RGB10A2.extract_code(SampleType::U32, word10, 1),
+        BitPacking::RGB10A2.extract_code(SampleType::U32, 1, word10),
         512
     );
     assert_eq!(
-        BitPacking::RGB10A2.extract_code(SampleType::U32, word10, 2),
+        BitPacking::RGB10A2.extract_code(SampleType::U32, 2, word10),
         1023
     );
     assert_eq!(
-        BitPacking::RGB10A2.extract_code(SampleType::U32, word10, 3),
+        BitPacking::RGB10A2.extract_code(SampleType::U32, 3, word10),
         3
     );
 
@@ -225,7 +225,8 @@ fn view_chained_lifetimes_and_sample_facts_invalidation() {
 #[test]
 fn banded_buf_planar_buf_and_dual_layer_hdr() {
     // BandedBuf with tiny 64-byte band cap forces multiple bands and shares PixelSource/PixelSink.
-    let mut banded = BandedBuf::new(8, 10, PixelFormat::RGBA8_SRGB, 64).unwrap();
+    let mut banded =
+        BandedBuf::new(8, 10, PixelFormat::RGBA8_SRGB, BandSizing::MaxBandBytes(64)).unwrap();
     assert!(banded.bands().len() >= 5);
     assert_eq!(banded.source_width(), 8);
     assert_eq!(banded.source_height(), 10);
@@ -257,13 +258,13 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
         PixelFormat::new(
             SampleLayout::GRAY8,
             ColorSpace::Untagged {
-                channels: 1,
+                total_channels: 1,
                 alpha: AlphaMode::None,
             },
         ),
     )
     .unwrap();
-    let meta = GainMapMetadata::symmetric_stops(2.3).unwrap();
+    let meta = GainMapMetadata::sdr_to_hdr_stops(2.3).unwrap();
     let dual = DualLayerHdrBuf::new(base, gain, meta).unwrap();
     assert_eq!(dual.base().width(), 16);
     assert_eq!(dual.gain_map().width(), 8);
@@ -280,9 +281,14 @@ fn banded_buf_planar_buf_and_dual_layer_hdr() {
 
     // DiffuseWhite + HlgRendering invariants
     assert_eq!(DiffuseWhite::default(), DiffuseWhite::BT2408);
-    let hlg_disp = HlgRendering::new(Nits::new(2000.0).unwrap(), 0.01, 1.32).unwrap();
+    let hlg_disp = HlgRendering::new(HlgRenderingParams {
+        peak: Nits::new_positive(2000.0).unwrap(),
+        black_nits: 0.01,
+        system_gamma: 1.32,
+    })
+    .unwrap();
     let cs = ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_disp)));
     assert!(cs.is_hdr());
-    assert_eq!(cs.to_cicp().unwrap().transfer_characteristics, 18);
+    assert_eq!(cs.to_cicp_lossy().unwrap().transfer_characteristics, 18);
     assert_eq!(ChannelOrder::Rgb.channels(), 3);
 }

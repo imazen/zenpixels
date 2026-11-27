@@ -7,7 +7,9 @@
 
 use core::cmp::min;
 use whereat::At;
-use zenpixels::{BandedBuf, Orientation, PixelBuf, PixelRect, PixelSink, PixelView, PixelViewMut};
+use zenpixels::{
+    BandSizing, BandedBuf, Orientation, PixelBuf, PixelRect, PixelSink, PixelView, PixelViewMut,
+};
 
 use crate::error::{ConvertError, err_at};
 
@@ -83,27 +85,28 @@ pub fn bake_orientation_owned(buf: PixelBuf) -> Result<PixelBuf, At<ConvertError
     apply_orientation(&buf.as_view(), orient)
 }
 
-/// Physically bake `src.orientation()` into a [`BandedBuf`] with each band bounded by
-/// `max_band_bytes` and [`Orientation::Identity`] on the result.
+/// Physically bake `src.orientation()` into a [`BandedBuf`] partitioned according to `sizing`
+/// ([`BandSizing::MaxBandBytes`] or [`BandSizing::RowsPerBand`]) with [`Orientation::Identity`]
+/// on the result.
 pub fn bake_orientation_banded(
     src: &BandedBuf,
-    max_band_bytes: usize,
+    sizing: BandSizing,
 ) -> Result<BandedBuf, At<ConvertError>> {
-    apply_orientation_banded(src, src.orientation(), max_band_bytes)
+    apply_orientation_banded(src, src.orientation(), sizing)
 }
 
 /// Apply explicit `orientation` to a [`BandedBuf`], returning a freshly allocated [`BandedBuf`]
-/// with each band bounded by `max_band_bytes`, [`Orientation::Identity`] metadata, and
+/// partitioned according to `sizing` with [`Orientation::Identity`] metadata and
 /// **zero full-frame contiguous allocation**.
 ///
 /// Preserves `src.hdr()`, `src.facts()`, and `src.origin()`.
 pub fn apply_orientation_banded(
     src: &BandedBuf,
     orientation: Orientation,
-    max_band_bytes: usize,
+    sizing: BandSizing,
 ) -> Result<BandedBuf, At<ConvertError>> {
     let (ow, oh) = orientation.output_dimensions(src.width(), src.height());
-    let mut out = BandedBuf::new(ow, oh, src.format().clone(), max_band_bytes)
+    let mut out = BandedBuf::new(ow, oh, src.format().clone(), sizing)
         .map_err(|e| err_at((*e.error()).into()))?
         .with_origin(src.origin().clone());
     apply_orientation_banded_into(src, orientation, &mut out)?;

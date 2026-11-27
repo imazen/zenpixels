@@ -3,7 +3,7 @@
 //! `CieLch`, `Jzazbz`, `Jzczhz`, `Hsl`, `Hsv`).
 
 use core::f32::consts::PI;
-use zenpixels::{PerceptualSpace, Primaries};
+use zenpixels::{DiffuseWhite, PerceptualSpace, Primaries};
 
 use crate::gamut::GamutMatrix;
 use crate::oklab::OklabSpace;
@@ -17,25 +17,30 @@ const D65_Y: f32 = 1.00000;
 const D65_Z: f32 = 1.08883;
 
 /// Convert linear RGB (in `primaries`) to a [`PerceptualSpace`] triple.
+///
+/// Polar/cylindrical spaces (`Oklch`, `CieLch`, `Jzczhz`, `Hsl`, `Hsv`) emit hue in
+/// **degrees `[0.0, 360.0)`**. `diffuse_white` sets the reference white luminance in cd/m²
+/// for absolute-luminance models (`Jzazbz`, `Jzczhz`).
 #[must_use]
 pub fn linear_rgb_to_perceptual(
     rgb: [f32; 3],
     primaries: Primaries,
     space: PerceptualSpace,
-    white_nits: f32,
+    diffuse_white: DiffuseWhite,
 ) -> [f32; 3] {
+    let white_nits = diffuse_white.nits();
     match space {
         PerceptualSpace::Oklch => {
             let ok = OklabSpace::for_primaries(primaries)
                 .unwrap_or_else(|| OklabSpace::for_primaries(Primaries::Bt709).unwrap())
                 .from_rgb(rgb);
-            cartesian_to_polar(ok)
+            cartesian_to_polar_deg(ok)
         }
         PerceptualSpace::CieLab => linear_rgb_to_cielab(rgb, primaries),
-        PerceptualSpace::CieLch => cartesian_to_polar(linear_rgb_to_cielab(rgb, primaries)),
+        PerceptualSpace::CieLch => cartesian_to_polar_deg(linear_rgb_to_cielab(rgb, primaries)),
         PerceptualSpace::Jzazbz => linear_rgb_to_jzazbz(rgb, primaries, white_nits),
         PerceptualSpace::Jzczhz => {
-            cartesian_to_polar(linear_rgb_to_jzazbz(rgb, primaries, white_nits))
+            cartesian_to_polar_deg(linear_rgb_to_jzazbz(rgb, primaries, white_nits))
         }
         PerceptualSpace::Hsl => {
             let srgb = [
@@ -58,25 +63,29 @@ pub fn linear_rgb_to_perceptual(
 }
 
 /// Convert a [`PerceptualSpace`] triple back to linear RGB (in `primaries`).
+///
+/// Polar/cylindrical spaces expect hue in **degrees**. `diffuse_white` sets the reference
+/// white luminance in cd/m² for `Jzazbz` and `Jzczhz`.
 #[must_use]
 pub fn perceptual_to_linear_rgb(
     v: [f32; 3],
     primaries: Primaries,
     space: PerceptualSpace,
-    white_nits: f32,
+    diffuse_white: DiffuseWhite,
 ) -> [f32; 3] {
+    let white_nits = diffuse_white.nits();
     match space {
         PerceptualSpace::Oklch => {
-            let lab = polar_to_cartesian(v);
+            let lab = polar_deg_to_cartesian(v);
             OklabSpace::for_primaries(primaries)
                 .unwrap_or_else(|| OklabSpace::for_primaries(Primaries::Bt709).unwrap())
                 .to_rgb(lab)
         }
         PerceptualSpace::CieLab => cielab_to_linear_rgb(v, primaries),
-        PerceptualSpace::CieLch => cielab_to_linear_rgb(polar_to_cartesian(v), primaries),
+        PerceptualSpace::CieLch => cielab_to_linear_rgb(polar_deg_to_cartesian(v), primaries),
         PerceptualSpace::Jzazbz => jzazbz_to_linear_rgb(v, primaries, white_nits),
         PerceptualSpace::Jzczhz => {
-            jzazbz_to_linear_rgb(polar_to_cartesian(v), primaries, white_nits)
+            jzazbz_to_linear_rgb(polar_deg_to_cartesian(v), primaries, white_nits)
         }
         PerceptualSpace::Hsl => {
             let srgb = hsl_to_rgb(v);
@@ -98,8 +107,10 @@ pub fn perceptual_to_linear_rgb(
     }
 }
 
+/// Convert Cartesian `[L, a, b]` to polar `[L, C, h_deg]` with hue `h_deg` in **degrees `[0.0, 360.0)`**.
 #[inline]
-pub fn cartesian_to_polar([l, a, b]: [f32; 3]) -> [f32; 3] {
+#[must_use]
+pub fn cartesian_to_polar_deg([l, a, b]: [f32; 3]) -> [f32; 3] {
     let c = libm::hypotf(a, b);
     let mut h = libm::atan2f(b, a) * RAD_TO_DEG;
     if h < 0.0 {
@@ -108,9 +119,11 @@ pub fn cartesian_to_polar([l, a, b]: [f32; 3]) -> [f32; 3] {
     [l, c, h]
 }
 
+/// Convert polar `[L, C, h_deg]` (hue `h_deg` in **degrees**) to Cartesian `[L, a, b]`.
 #[inline]
-pub fn polar_to_cartesian([l, c, h]: [f32; 3]) -> [f32; 3] {
-    let rad = h * DEG_TO_RAD;
+#[must_use]
+pub fn polar_deg_to_cartesian([l, c, h_deg]: [f32; 3]) -> [f32; 3] {
+    let rad = h_deg * DEG_TO_RAD;
     [l, c * libm::cosf(rad), c * libm::sinf(rad)]
 }
 

@@ -100,6 +100,21 @@ impl ExactDepth {
         })
     }
 
+    /// Convenience for formats without an alpha channel: states that color channels are exact
+    /// at `color_bits` (setting `alpha_bits` to full storage depth, matching [`measure`](Self::measure)).
+    pub const fn new_opaque(
+        storage: SampleType,
+        range: SignalRange,
+        color_bits: u8,
+    ) -> Result<Self, ExactDepthError> {
+        let storage_bits = match storage {
+            SampleType::U8 => 8,
+            SampleType::U16 => 16,
+            _ => return Err(ExactDepthError::UnsupportedStorage),
+        };
+        Self::new(storage, range, color_bits, storage_bits)
+    }
+
     /// Storage the statement applies to (`SampleType::U8` or `SampleType::U16`).
     #[inline]
     #[must_use]

@@ -83,7 +83,7 @@ fn imagespec_const_promotion_pixelformat_copy_and_niches() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(minimal_valid_icc(b"mntr")),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -103,7 +103,7 @@ fn speccow_zero_arc_bumps_across_views_crops_and_mut_views() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::clone(&profile),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -128,7 +128,7 @@ fn speccow_zero_arc_bumps_across_views_crops_and_mut_views() {
     }
 
     {
-        let mut mv = buf.try_as_view_mut().unwrap();
+        let mut mv = buf.try_make_view_mut().unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
         let sub = mv.crop_mut(PixelRect::new(0, 0, 4, 4)).unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
@@ -198,7 +198,7 @@ fn lossless_h273_cicp_all_primaries_transfers_projective_and_clli() {
         alpha: AlphaMode::None,
         white: None,
     };
-    assert_eq!(cs_601.to_cicp(), Some(cicp_601));
+    assert_eq!(cs_601.to_cicp_lossy(), Some(cicp_601));
 
     // ClliCodes lossless 0.0001-nit PNG cLLI wire carrier.
     let codes = ClliCodes::from_ten_thousandths(12_345_678, 2_502_500);
@@ -288,7 +288,7 @@ fn icc_structural_validation_wired_into_imagespec() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(oob_tag),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -303,7 +303,7 @@ fn icc_structural_validation_wired_into_imagespec() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(minimal_valid_icc(b"mntr")),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -349,22 +349,22 @@ fn opaque_construction_white_fill_new_zeroed_retag_and_recovery() {
     let white_cmyk = PixelBuf::new_white(1, 1, PixelFormat::cmyk8(None)).unwrap();
     assert_eq!(white_cmyk.as_view().row(0), &[0, 0, 0, 0]);
 
-    // 3. `new_zeroed` refuses `AlphaMode::Opaque` on alpha-bearing layouts, accepts `Undefined`.
+    // 3. `new_raw_zeroed` refuses `AlphaMode::Opaque` on alpha-bearing layouts, accepts `Undefined`.
     assert_eq!(
-        *PixelBuf::new_zeroed(4, 4, op_rgba8.clone())
+        *PixelBuf::new_raw_zeroed(4, 4, op_rgba8.clone())
             .unwrap_err()
             .error(),
         BufferError::UnverifiedOpaqueAlpha
     );
     assert_eq!(
-        *PixelBuf::new_zeroed(4, 4, rgb10a2_spec)
+        *PixelBuf::new_raw_zeroed(4, 4, rgb10a2_spec)
             .unwrap_err()
             .error(),
         BufferError::UnverifiedOpaqueAlpha
     );
 
     let straight_rgba8 = PixelFormat::RGBA8_SRGB;
-    let mut fast = PixelBuf::new_zeroed(2, 1, straight_rgba8).unwrap();
+    let mut fast = PixelBuf::new_raw_zeroed(2, 1, straight_rgba8).unwrap();
     assert_eq!(fast.as_view().row(0), &[0, 0, 0, 0, 0, 0, 0, 0]);
 
     // Filling with alpha != 255 fails `into_opaque_verified`.
@@ -455,10 +455,16 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     assert_eq!(buf.display_dimensions(), (6, 4));
 
     // BandedBuf propagates orientation to bands and back through into_buf.
-    let banded = BandedBuf::from_buf(buf.clone(), 64).unwrap();
+    let banded = BandedBuf::from_buf(buf.clone(), zenpixels::BandSizing::MaxBandBytes(64)).unwrap();
     assert_eq!(banded.orientation(), Orientation::Rotate180);
     assert_eq!(banded.bands()[0].orientation(), Orientation::Rotate180);
-    let mut dst_band = BandedBuf::new(6, 4, ParametricFormat::RGB8_SRGB, 64).unwrap();
+    let mut dst_band = BandedBuf::new(
+        6,
+        4,
+        ParametricFormat::RGB8_SRGB,
+        zenpixels::BandSizing::MaxBandBytes(64),
+    )
+    .unwrap();
     dst_band.sink_set_orientation(Orientation::Rotate270);
     assert_eq!(dst_band.orientation(), Orientation::Rotate270);
     assert_eq!(
@@ -470,7 +476,7 @@ fn orientation_carriage_across_buffers_views_bands_planar_and_dual_layer() {
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -1078,7 +1084,10 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     // 1. MatrixCoefficients 1-byte lossless newtype & Cicp::matrix() interop.
     assert_eq!(core::mem::size_of::<MatrixCoefficients>(), 1);
     assert_eq!(core::mem::size_of::<Option<MatrixCoefficients>>(), 2);
-    assert_eq!(Cicp::BT2100_PQ.matrix(), MatrixCoefficients::BT2020_NCL);
+    assert_eq!(
+        Cicp::BT2100_PQ_YCBCR_FULL.matrix(),
+        MatrixCoefficients::BT2020_NCL
+    );
     assert_eq!(MatrixCoefficients::BT709.code(), 1);
     assert_eq!(MatrixCoefficients::BT709.name(), Some("BT.709"));
     assert_eq!(format!("{}", MatrixCoefficients::BT709), "BT.709 (MC=1)");
@@ -1206,7 +1215,7 @@ fn option_1_sample_stride_matrix_coefficients_and_crop_symmetry() {
     assert_eq!(cropped.origin(), &origin);
     assert_eq!(cropped.orientation(), Orientation::Rotate90);
 
-    let tight = cropped.into_tight_buf().unwrap();
+    let tight = cropped.into_tight_rows().unwrap();
     assert_eq!(tight.stride_bytes(), 2 * 6);
     assert_eq!(tight.as_view().row_as::<u16>(0).unwrap()[0], 999);
     assert!(tight.facts().all_grayscale);

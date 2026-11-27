@@ -109,10 +109,11 @@ impl fmt::Debug for Nits {
 }
 
 impl Nits {
-    /// Construct a luminance in cd/m², returning `None` unless `value` is finite and strictly positive.
+    /// Construct a strictly positive luminance in cd/m², returning `None` unless `value` is
+    /// finite and strictly greater than `0.0` (returns `None` for `0.0`, negatives, NaN, Inf).
     #[inline]
     #[must_use]
-    pub const fn new(value: f32) -> Option<Self> {
+    pub const fn new_positive(value: f32) -> Option<Self> {
         if value.is_finite() && value > 0.0 {
             match NonZeroU32::new(value.to_bits()) {
                 Some(bits) => Some(Self(bits)),
@@ -122,9 +123,9 @@ impl Nits {
             None
         }
     }
-    /// Construct a luminance in cd/m², panicking on invalid input.
+    /// Construct a strictly positive luminance in cd/m², panicking on invalid input.
     ///
-    /// Intended for `const` items and validated literals; prefer [`new`](Self::new)
+    /// Intended for `const` items and validated literals; prefer [`new_positive`](Self::new_positive)
     /// for runtime inputs.
     ///
     /// # Panics
@@ -132,7 +133,7 @@ impl Nits {
     #[track_caller]
     #[inline]
     #[must_use]
-    pub const fn new_or_panic(value: f32) -> Self {
+    pub const fn new_positive_or_panic(value: f32) -> Self {
         assert!(
             value.is_finite() && value > 0.0,
             "luminance must be finite and strictly positive"
@@ -152,14 +153,18 @@ impl Nits {
 
 /// How an image-level conversion obtains the source peak for HDR tone mapping.
 ///
+/// Intentionally has no `Default` so callers choose explicitly between
+/// [`Measured`](Self::Measured) (streaming full-image scan),
+/// [`Declared`](Self::Declared) (metadata-only, refuses if absent), and
+/// [`Fixed`](Self::Fixed) (caller-supplied peak).
+///
 /// Row-only plans accept an explicit `Option<Nits>` instead of `PeakSource`,
 /// making it a compile-time error to request [`PeakSource::Measured`] on a
 /// single-row converter.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PeakSource {
     /// Streamingly measure the image's peak luminance in O(1) row memory.
-    #[default]
     Measured,
     /// Use the source peak declared in [`HdrMetadata`](crate::HdrMetadata); refuse if absent.
     Declared,
@@ -444,12 +449,15 @@ impl ClliCodes {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct St2086Codes([u8; 24]);
 impl St2086Codes {
-    /// Preserve all 24 bytes in the documented RGB-order representation.
-    pub const fn from_be_bytes(bytes: [u8; 24]) -> Self {
+    /// Preserve all 24 big-endian bytes in **RGB primary order** (`[Rx, Ry, Gx, Gy, Bx, By, Wx, Wy, max, min]`).
+    ///
+    /// Note: container wire formats using ST 2086 G,B,R primary order (e.g. HEVC/AV1/PNG `mDCV`)
+    /// must reorder to RGB before calling this constructor.
+    pub const fn from_rgb_order_be_bytes(bytes: [u8; 24]) -> Self {
         Self(bytes)
     }
-    /// Return the exact original code bytes, without a float round trip.
-    pub const fn to_be_bytes(self) -> [u8; 24] {
+    /// Return the exact 24 big-endian bytes in **RGB primary order**, without a float round trip.
+    pub const fn to_rgb_order_be_bytes(self) -> [u8; 24] {
         self.0
     }
     /// Interpret codes for display decisions. This view can lose precision;
@@ -464,6 +472,17 @@ impl St2086Codes {
             lum(20),
         )
     }
+}
+
+/// Named parameter struct for [`HlgRendering::new`], preventing swapped `black_nits` and `system_gamma`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HlgRenderingParams {
+    /// Target/reference display peak luminance in cd/m².
+    pub peak: Nits,
+    /// Display black luminance in cd/m² (`0.0..=peak * 0.01`).
+    pub black_nits: f32,
+    /// Surround-adjusted HLG system gamma (`0.5..=3.0`, e.g. `1.2` at 1000 nits / 5 nit surround).
+    pub system_gamma: f32,
 }
 
 /// Explicit HLG display rendering conditions. No implicit default exists.
@@ -481,14 +500,21 @@ impl HlgRendering {
     /// Explicit ideal-black reference rendering: 1000 nits, gamma 1.2,
     /// reference surround (5 cd/m²). Opt in; never inferred from an HLG tag.
     pub const REFERENCE_1000_NIT: Self = Self {
-        peak: Nits::new_or_panic(1000.0),
+        peak: Nits::new_positive_or_panic(1000.0),
         black_bits: 0,
         gamma_bits: 1.2f32.to_bits(),
     };
-    /// Supply resolved display peak, black luminance and surround-adjusted gamma.
-    /// Supports finite gamma 0.5..=3 and black 0..=1% of peak. Other conditions
-    /// refuse rather than applying an unqualified extrapolation.
-    pub const fn new(peak: Nits, black_nits: f32, system_gamma: f32) -> Option<Self> {
+    /// Supply resolved display peak, black luminance, and surround-adjusted gamma via
+    /// [`HlgRenderingParams`].
+    ///
+    /// Supports finite `system_gamma` in `0.5..=3.0` and `black_nits` in `0.0..=0.01 * peak`.
+    /// Other conditions return `None` rather than applying an unqualified extrapolation.
+    pub const fn new(params: HlgRenderingParams) -> Option<Self> {
+        let HlgRenderingParams {
+            peak,
+            black_nits,
+            system_gamma,
+        } = params;
         if !black_nits.is_finite()
             || black_nits < 0.0
             || black_nits > peak.nits() * 0.01

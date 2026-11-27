@@ -108,7 +108,10 @@ impl ProfileKind {
             },
             Self::Icc(profile) => ColorSpace::Icc {
                 profile: Arc::clone(profile),
-                channels: if matches!(layout.order, ChannelOrder::Gray | ChannelOrder::GrayAlpha) {
+                color_channels: if matches!(
+                    layout.order,
+                    ChannelOrder::Gray | ChannelOrder::GrayAlpha
+                ) {
                     1
                 } else {
                     3
@@ -224,7 +227,7 @@ fn garbage_icc_is_never_accepted() {
                 SampleLayout::RGB8,
                 ColorSpace::Icc {
                     profile: Arc::from(bad),
-                    channels: 3,
+                    color_channels: 3,
                     alpha: AlphaMode::None,
                     intent: RenderingIntent::RelativeColorimetric,
                 },
@@ -556,7 +559,7 @@ fn gray_round_trips_and_carries_alpha() {
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::clone(&icc),
-            channels: 1,
+            color_channels: 1,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -585,7 +588,7 @@ fn gray_round_trips_and_carries_alpha() {
         SampleLayout::GRAYA8,
         ColorSpace::Icc {
             profile: icc,
-            channels: 1,
+            color_channels: 1,
             alpha: AlphaMode::Straight,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -714,7 +717,7 @@ fn float_mpe_and_absolute_intent_guards_hold() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(mpe.clone()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -723,7 +726,7 @@ fn float_mpe_and_absolute_intent_guards_hold() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(mpe),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },

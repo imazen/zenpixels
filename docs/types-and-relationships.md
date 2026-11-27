@@ -40,7 +40,7 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 | `PixelCow<'a>` | `enum` | `Borrowed(PixelView<'a>)` or `Owned(PixelBuf)` (used by `EncodeReady`) | [Drilldown 2](#ownership-and-borrowing-relationships) |
 | `PixelStorage` | `enum` | Owned backing memory behind `PixelBuf`/`PlaneBuf` (`U8`..`F64`, `F16`, `Aligned64`, `External`, `ExternalMut`) | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `PixelBufParts` | `struct` | All 10 fields of `PixelBuf` disassembled for `into_parts` / `from_parts` | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
-| `BandedBuf` / `BandRowLocation` | `struct` | Gigapixel-safe image split into bounded-memory horizontal `Vec<PixelBuf>` bands (`locate_row -> Option<BandRowLocation>`) | [Drilldown 2](#bandedbuf-for-gigapixel-images) |
+| `BandedBuf` / `BandSizing` / `BandRowLocation` | `struct` / `enum` | Gigapixel-safe image split into bounded-memory horizontal `Vec<PixelBuf>` bands (`BandSizing::{MaxBandBytes, RowsPerBand}`, `locate_row -> Option<BandRowLocation>`) | [Drilldown 2](#bandedbuf-for-gigapixel-images) |
 | `InPlaceTransformInput` / `Output` | `struct` | Named input/output structs for `PixelBuf::transform_in_place` closure | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `PixelSource` / `PixelSink` | `trait` | Row-by-row source/sink traits implemented by `PixelBuf`, `PixelView`/`PixelViewMut`, and `BandedBuf` | [Drilldown 2](#ownership-and-borrowing-relationships) |
 | `ByteStorage` / `ByteStorageMut` | `trait` | Zero-copy external backing storage traits (`Arc<[T]>`, `Box<[T]>`, `Vec<T>`, custom FFI owners) | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
@@ -85,9 +85,9 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 | `RowPlan` | `struct` | Compiled streaming row-by-row converter with zero per-row heap allocation (`convert_row` / `convert_row_at`) | [Drilldown 5](#choosing-a-conversion-entry-point) |
 | `OutputPlan` / `EncodeReady<'a>` / `OutputSignaling` / `ResolvedSignaling` | `struct` / `struct` / `enum` / `struct` | Encoder adaptation plan that converts pixels and resolves matching CICP + ICC signaling atomically | [Drilldown 5](#outputplan-negotiate-and-encodeready) |
 | `Negotiate` / `NegotiatedFormat` / `FormatCost` / `LossKind` | `struct` / `struct` / `struct` / `enum` | Picks the lowest-loss, lowest-effort encoder format from `&[PixelFormat]` or `&[ParametricFormat]` | [Drilldown 5](#outputplan-negotiate-and-encodeready) |
-| `Accelerators` | `struct` (`Copy`) | `const` SIMD feature bitmask (`SCALAR`, `LAYOUT`, `WEB_SDR`, `HDR`, `GAINMAP`, `OKLAB`, `ALL`) | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
+| `Accelerators` | `struct` (`Copy`) | `const` SIMD accelerator table (`SCALAR`, `LAYOUT`, `WEB_SDR`, `HDR`, `GAINMAP`, `OKLAB`, `ROW_PIPELINE`, `ALL`) | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
 | `CmsBackend` / `CmsTransform` / `MoxCms` / `Lcms` | `trait` / `struct` | Pluggable ICC/CMYK color management backends (`cms-moxcms`, `cms-lcms` features) | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
-| `ToneMapper` / `Bt2446A` / `SoftCompress` | `trait` / `struct` | Pluggable HDR→SDR tone mapper (ITU-R BT.2446 Method A) and Oklab gamut soft-knee compressor | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
+| `ToneMapper` / `Bt2446A` / `Bt2446APipelineManaged` / `SoftCompress` | `trait` / `struct` | Pluggable HDR→SDR tone mapper (ITU-R BT.2446 Method A: baked `Bt2446A` or `Bt2446APipelineManaged`) and Oklab gamut soft-knee compressor | [Drilldown 5](#convertpolicy-anatomy-and-presets) |
 | `GainMapApplier` / `GainMapLayer` / `GainMapApplyConfig` / `GainMapExtractConfig` / `GainMapRowExtractor` | `struct` | Streaming and whole-image ISO 21496-1 / UltraHDR gain-map rendering and extraction (`gainmap` module) | [Drilldown 5](#gain-maps-compaction-and-measurement) |
 | `PlanarReconstructionOptions` / `ChromaUpsample` | `struct` / `enum` | Planar YCbCr/GBR/RGB → interleaved reconstruction settings (`nearest`, `bilinear`, siting fallback) | [Drilldown 3](#constructing-and-reconstructing-planar-images) |
 | `CompactionReport` / `AlphaCompaction` | `struct` / `enum` | Content analysis (`requires_alpha`, `requires_chroma`, `requires_u16_precision`) + lossless compaction | [Drilldown 5](#gain-maps-compaction-and-measurement) |
@@ -181,8 +181,8 @@ PixelFormat (Clone, Eq, Hash — NOT Copy because ColorSpace::Icc holds Arc<[u8]
     ├── Perceptual { space: PerceptualSpace (CieLab | CieLch | Oklch | Hsl | Hsv | Jzazbz | Jzczhz),
     │                alpha: AlphaMode }
     ├── Cmyk       { inverted: bool, alpha: AlphaMode, icc: Option<Arc<[u8]>> }
-    ├── Icc        { profile: Arc<[u8]>, channels: u8, alpha: AlphaMode, intent: RenderingIntent }
-    └── Untagged   { channels: u8, alpha: AlphaMode }
+    ├── Icc        { profile: Arc<[u8]>, color_channels: u8, alpha: AlphaMode, intent: RenderingIntent }
+    └── Untagged   { total_channels: u8, alpha: AlphaMode }
 
     where:
     ├── Primaries  ── Bt709 | DisplayP3 | Bt2020 | AdobeRgb | DciP3 | Bt601 | Bt470M | Bt470Bg
@@ -231,7 +231,7 @@ flowchart LR
 | Linear working-space float | `PixelFormat::RGBAF32_LINEAR` / `&formats::RGBAF32_LINEAR` | `F32` · `Rgba` · `Full` | `Rgb { Bt709, Linear, Full, Straight, None }` |
 | HDR10 / BT.2100 PQ 16-bit | `PixelFormat::RGB16_BT2100_PQ` | `U16` · `Rgb` · `Full` | `Rgb { Bt2020, Pq, Full, None, None }` |
 | HDR BT.2100 HLG (scene vs 1000-nit display) | `PixelFormat::RGB16_BT2100_HLG_SCENE` / `RGB16_BT2100_HLG_1000` | `U16` · `Rgb` · `Full` | `Rgb { Bt2020, Hlg(Scene \| Display(1000 nit)), ... }` |
-| Arbitrary ICC profile (e.g. Adobe RGB) | `PixelFormat::new(SampleLayout::RGB8, ColorSpace::Icc { profile, channels: 3, alpha: AlphaMode::None, intent: RenderingIntent::RelativeColorimetric })` | `U8` · `Rgb` · `Full` | `Icc { profile: Arc<[u8]>, ... }` |
+| Arbitrary ICC profile (e.g. Adobe RGB) | `PixelFormat::new(SampleLayout::RGB8, ColorSpace::Icc { profile, color_channels: 3, alpha: AlphaMode::None, intent: RenderingIntent::RelativeColorimetric })` | `U8` · `Rgb` · `Full` | `Icc { profile: Arc<[u8]>, ... }` |
 | CMYK JPEG (with optional ICC) | `PixelFormat::cmyk8(Some(icc_arc))` or `PixelFormat::cmyk8(None)` | `U8` · `Cmyk` · `Full` | `Cmyk { inverted: false, None, icc }` |
 | Grayscale 8-bit / linear float | `PixelFormat::GRAY8_SRGB` / `PixelFormat::GRAYF32_LINEAR` | `U8`/`F32` · `Gray` · `Full` | `Gray { Srgb / Linear, Full, None, None }` |
 
@@ -279,7 +279,7 @@ let icc_fmt = PixelFormat::new(
     SampleLayout::RGB8,
     ColorSpace::Icc {
         profile: Arc::from(icc_bytes),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     },
@@ -305,7 +305,7 @@ flowchart LR
     BB["BandedBuf (Vec of PixelBuf bands)"]
 
     PB -->|"as_view() / crop_view() / sub_rows()"| PV
-    PB -->|"try_as_view_mut() / crop_view_mut() / sub_rows_mut()"| PVM
+    PB -->|"try_make_view_mut() / crop_view_mut() / sub_rows_mut()"| PVM
     PVM -->|"as_view() / into_view()"| PV
     PV -->|"to_tight_buf() (allocates)"| PB
     PV -->|"PixelCow::Borrowed"| PCOW
@@ -359,8 +359,8 @@ PixelView<'a>                               PixelViewMut<'a>
 |---|---|---|
 | Nothing yet — want safe black pixels | `PixelBuf::new(w, h, format)` | Fills black; fills alpha to channel max if `AlphaMode::Opaque` |
 | Nothing yet — want reference white | `PixelBuf::new_white(w, h, format)` | `255`/`65535`/`1.0` (studio `235 << shift` for narrow range) |
-| Nothing yet — decoder will overwrite every byte | `PixelBuf::new_zeroed(w, h, format)` | Fastest (zero-fill only); **refuses `AlphaMode::Opaque`** on alpha-bearing layouts |
-| Custom row alignment (e.g. 64-byte SIMD) | `PixelBuf::new_aligned(w, h, format, RowAlign::Cache64)` or `new_zeroed_aligned` / `new_with_fill` | `RowAlign::{Tight, Cache64, PixelCache64, Samples(u16)}` |
+| Nothing yet — decoder will overwrite every byte | `PixelBuf::new_raw_zeroed(w, h, format)` | Fastest (zero-fill only); **refuses `AlphaMode::Opaque`** on alpha-bearing layouts |
+| Custom row alignment (e.g. 64-byte SIMD) | `PixelBuf::new_aligned(w, h, format, RowAlign::Cache64)` or `new_raw_zeroed_aligned` / `new_with_fill` | `RowAlign::{Tight, Cache64, PixelCache64, Samples(u16)}` |
 | Tight `Vec<u8>` raw bytes | `PixelBuf::from_bytes(bytes, w, h, format)` | Use `from_bytes_recover` to get `Vec<u8>` back on error |
 | Tight `Vec<P>` (`u8`, `u16`, `f32`, `[u8; 3]`, `Rgbx`, `rgb::Rgb<u8>`) | `PixelBuf::from_typed(vec, w, h, format)` | Checks `P: TypedElement` against `format.layout`; use `from_typed_recover` to recover |
 | Tight scalar `Vec<S>` (`u8`/`u16`/`f32`/`F16Sample`) | `PixelBuf::from_samples(vec, w, h, format)` | Checks `S::SAMPLE_TYPE == format.layout.sample` |
@@ -385,22 +385,22 @@ let mut buf = PixelBuf::from_external(shared.clone(), 2, 2, 6, PixelFormat::RGB8
     .map_err(|(err, _orig)| err)?;
 let crop = buf.crop_view(PixelRect::new(1, 0, 1, 2))?;
 assert_eq!(crop.stride_bytes(), 6);        // Parent stride preserved; row(y) has 3 active bytes
-buf.try_as_view_mut()?.row_mut(0)[0] = 42; // CoW promotes `buf`; `shared` stays untouched
+buf.try_make_view_mut()?.row_mut(0)[0] = 42; // CoW promotes `buf`; `shared` stays untouched
 
 // 3. Relabel metadata without changing pixel bytes:
 let p3_buf = buf.relabel_color(ColorSpace::DISPLAY_P3)?; // Same layout, new ColorSpace
 let bgr_buf = p3_buf.relabel_format(PixelFormat::BGR8_SRGB)?; // Same sample/bpp, different order
-let _tight = bgr_buf.into_crop(PixelRect::new(0, 0, 1, 2))?.into_tight_buf()?; // O(1) crop, then pack tight
+let _tight = bgr_buf.into_crop(PixelRect::new(0, 0, 1, 2))?.into_tight_rows()?; // O(1) crop, then pack tight rows
 ```
 
 ### `BandedBuf` for Gigapixel Images
 
-`BandedBuf` holds `Vec<PixelBuf>` horizontal bands each capped at `max_band_bytes` (default `DEFAULT_MAX_BAND_BYTES`), and implements both `PixelSource` and `PixelSink` so `ImagePlan::execute` / `execute_into` and `apply_orientation_banded` process arbitrarily large images without one contiguous allocation:
+`BandedBuf` holds `Vec<PixelBuf>` horizontal bands sized via `BandSizing::{MaxBandBytes(usize), RowsPerBand(u32)}` (default `BandSizing::DEFAULT`), and implements both `PixelSource` and `PixelSink` so `ImagePlan::execute` / `execute_into` and `apply_orientation_banded` process arbitrarily large images without one contiguous allocation:
 
 ```rust
-use zenpixels::{BandRowLocation, BandedBuf, DEFAULT_MAX_BAND_BYTES, PixelFormat};
+use zenpixels::{BandRowLocation, BandSizing, BandedBuf, PixelFormat};
 
-let mut big = BandedBuf::new(4096, 4096, PixelFormat::RGB8_SRGB, DEFAULT_MAX_BAND_BYTES)?;
+let mut big = BandedBuf::new(4096, 4096, PixelFormat::RGB8_SRGB, BandSizing::DEFAULT)?;
 let BandRowLocation { band_index, local_y } = big.locate_row(1000).unwrap();
 let _row: &[u8] = big.row(1000);
 let _band_view = big.band_view(band_index).unwrap();
@@ -564,9 +564,9 @@ HdrMetadata (Copy, Default = empty)
     └── min_luminance:  f32                  (cd/m²)
 
 Validated luminance wrappers:
-├── Nits(f32)         ── finite > 0.0; Nits::new(1000.0) -> Option<Nits>, const Nits::new_or_panic(1000.0)
+├── Nits(f32)         ── finite > 0.0; Nits::new_positive(1000.0) -> Option<Nits>, const Nits::new_positive_or_panic(1000.0)
 ├── DiffuseWhite(f32) ── SDR paper-white anchor; DiffuseWhite::new(v) -> Option, DiffuseWhite::BT2408 = 203.0 nits
-└── HlgRendering      ── peak: Nits, black_nits: f32, system_gamma: f32 (REFERENCE_1000_NIT)
+└── HlgRendering      ── peak: Nits, black_nits: f32, system_gamma: f32 (REFERENCE_1000_NIT; HlgRendering::new(HlgRenderingParams { ... }))
 ```
 
 ### `SampleFacts`, `ExactDepth`, and `FloatFacts`
@@ -574,7 +574,8 @@ Validated luminance wrappers:
 ```text
 SampleFacts (Copy, Default = NONE; automatically cleared on any mutable pixel access!)
 ├── float:         FloatFacts         (bitflags: NO_NAN, NO_INFINITE, NO_SUBNORMALS,
-│                                      NON_NEGATIVE, POSITIVE, AT_MOST_ONE, FINITE, UNIT_INTERVAL)
+│                                      NON_NEGATIVE, POSITIVE, AT_MOST_ONE, FINITE,
+│                                      UNIT_INTERVAL, NORMAL_UNIT_INTERVAL)
 ├── depth:         Option<ExactDepth> (storage: SampleType, range: SignalRange,
 │                                      color_bits: u8, alpha_bits: u8)
 ├── all_opaque:    bool               (every active alpha sample == channel max)
@@ -629,7 +630,7 @@ flowchart LR
     PEAK["PeakSource (Measured | Declared | Fixed Nits)"]
     SIG["OutputSignaling (Auto | SameAsOrigin | CicpOnly | EmbedIcc | CustomIcc | Strip)"]
 
-    SRC --> Q["to_rgb8 / to_rgba8 / to_bgra8 / to_gray8"]
+    SRC --> Q["to_rgb8_if_opaque / to_rgba8 / to_bgra8 / to_gray8_if_opaque"]
     SRC --> ONESHOT["convert_to_buf / convert_into"]
     SRC --> IP["ImagePlan::build -> execute / execute_into"]
     SRC --> RP["RowPlan::build(Option Nits) -> convert_row"]
@@ -711,7 +712,7 @@ for y in 0..src_view.height() {
 }
 
 // 4. Whole-image HDR PQ -> SDR tone mapping with streaming peak measurement:
-let hdr_policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap())
+let hdr_policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap())
     .with_tone_mapper(Arc::new(Bt2446A::pipeline_managed()));
 let sdr = ImagePlan::build(
     &formats::RGB16_BT2100_PQ,
@@ -762,13 +763,13 @@ let (negotiated, ready) = adapt_for_encode_parametric(
 
 | Area | Contract |
 |---|---|
-| `PixelBuf::new` vs `PixelBuf::new_zeroed` | `new` fills black + channel-max alpha for `AlphaMode::Opaque`. `new_zeroed` skips alpha fill and **rejects `AlphaMode::Opaque`** with `BufferError::UnverifiedOpaqueAlpha` until you fill pixels and call `into_opaque_verified()` / `assume_opaque()`. |
+| `PixelBuf::new` vs `PixelBuf::new_raw_zeroed` | `new` fills black + channel-max alpha for `AlphaMode::Opaque`. `new_raw_zeroed` skips alpha fill and **rejects `AlphaMode::Opaque`** with `BufferError::UnverifiedOpaqueAlpha` until you fill pixels and call `into_opaque_verified()` / `assume_opaque()`. |
 | `crop(PixelRect)` / `crop_view(PixelRect)` | Takes `PixelRect::new(x, y, width, height)` in pixels. Crops preserve the parent's `stride_bytes()`. |
 | `RowPlan::convert_row` vs `convert_row_at` | `convert_row(src, dst, width_pixels)` is the common 3-arg call; `convert_row_at(row_index, src, dst, width_pixels)` passes the image row index for deterministic 4×4 Bayer ordered dithering. |
 | `reconstruct_planar_to_buf` vs `reconstruct_planar_into` | Both put `&PlanarReconstructionOptions` **last**: `to_buf(src, dst_layout, options)` and `into(src, dst, options)`. |
 | `with_*` vs `try_with_*` on `ColorSpace`, `ParametricColor`, `PixelFormat`, `ParametricFormat` | `with_*` returns `Self` (no-op if the variant lacks that field); `try_with_*` returns `Option<Self>` (`None` if inapplicable). |
 | `LightLevelHistogram::quantile_nits(quantile)` | `quantile` is a **fraction in `0.0..=1.0`** (e.g. `0.999`), not `0.0..=100.0`. `LightLevelHistogram::new(method)` is fallible (`Result<Self, At<ConvertError>>`). |
 | `PixelView::as_strided_bytes()` vs `as_contiguous_bytes()` vs `to_contiguous_bytes()` | `as_strided_bytes()` includes row padding bytes; `as_contiguous_bytes()` returns `Option<&[u8]>` (only when tight); `to_contiguous_bytes()` returns `Result<Cow<[u8]>, _>` (copies to strip padding when strided). |
-| `PixelBuf::as_view_mut()` vs `try_as_view_mut()` | On immutable `External` storage (`Arc<[u8]>`), `as_view_mut()` promotes via CoW and **panics on OOM**; `try_as_view_mut()` returns `Result<PixelViewMut<'_>, At<BufferError>>`. |
+| `PixelBuf::as_view_mut()` vs `try_make_view_mut()` | On immutable `External` storage (`Arc<[u8]>`), `as_view_mut()` promotes via CoW and **panics on OOM**; `try_make_view_mut()` returns `Result<PixelViewMut<'_>, At<BufferError>>`. |
 | `ExactDepth::intersect_same_buffer` vs `union_disjoint_regions` | `intersect_same_buffer` takes the tighter depth (`min`) of two facts about the **same** buffer; `union_disjoint_regions` computes the smallest common containing grid (`lcm` / `max`) across **disjoint** strips of an image. |
-| `Nits::new` / `DiffuseWhite::new` / `GainMapMetadata::symmetric_stops` | Fallible (`Option<Self>`) when rejecting non-positive or non-finite values; const panicking constructors use explicit `_or_panic` (`Nits::new_or_panic`, `DiffuseWhite::new_or_panic`). |
+| `Nits::new_positive` / `DiffuseWhite::new` / `GainMapMetadata::sdr_to_hdr_stops` | Fallible (`Option<Self>`) when rejecting non-positive or non-finite values; const panicking constructors use explicit `_or_panic` (`Nits::new_positive_or_panic`, `DiffuseWhite::new_or_panic`). |

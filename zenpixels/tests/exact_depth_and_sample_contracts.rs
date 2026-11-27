@@ -208,7 +208,7 @@ fn with_spec_with_color_reinterpret_and_origin_preservation_contracts() {
     let i8_spec = PixelFormat::new(
         SampleLayout::new(SampleType::I8, ChannelOrder::Rgb),
         ColorSpace::Untagged {
-            channels: 3,
+            total_channels: 3,
             alpha: AlphaMode::None,
         },
     );
@@ -346,13 +346,13 @@ fn planar_role_arity_odd_crop_origin_and_alignment() {
 
 #[test]
 fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
-    // B27: `GainMapMetadata::symmetric_stops` rejects <= 0, NaN, and infinity; accepts positive.
-    assert!(GainMapMetadata::symmetric_stops(-1.0).is_none());
-    assert!(GainMapMetadata::symmetric_stops(0.0).is_none());
-    assert!(GainMapMetadata::symmetric_stops(f32::NAN).is_none());
-    assert!(GainMapMetadata::symmetric_stops(f32::INFINITY).is_none());
-    assert!(GainMapMetadata::symmetric_stops(f32::NEG_INFINITY).is_none());
-    let pos_meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
+    // B27: `GainMapMetadata::sdr_to_hdr_stops` rejects <= 0, NaN, and infinity; accepts positive.
+    assert!(GainMapMetadata::sdr_to_hdr_stops(-1.0).is_none());
+    assert!(GainMapMetadata::sdr_to_hdr_stops(0.0).is_none());
+    assert!(GainMapMetadata::sdr_to_hdr_stops(f32::NAN).is_none());
+    assert!(GainMapMetadata::sdr_to_hdr_stops(f32::INFINITY).is_none());
+    assert!(GainMapMetadata::sdr_to_hdr_stops(f32::NEG_INFINITY).is_none());
+    let pos_meta = GainMapMetadata::sdr_to_hdr_stops(2.5).unwrap();
     assert!(pos_meta.is_valid());
     assert!((pos_meta.alternate_hdr_headroom.to_f32() - 2.5).abs() < 1e-4);
 
@@ -374,7 +374,7 @@ fn dual_layer_hdr_strict_alternate_into_parts_and_try_symmetric() {
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -563,7 +563,7 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
         SampleLayout::RGBF32,
         ColorSpace::Icc {
             profile: fake_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -573,7 +573,7 @@ fn exact_depth_union_disjoint_strips_and_icc_can_represent_hdr() {
         SampleLayout::RGB16,
         ColorSpace::Icc {
             profile: fake_icc,
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -614,7 +614,7 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
     assert!(!bad_flag.is_valid());
     assert_eq!(bad_flag.direction(), None);
 
-    let fwd_bad_flag = GainMapMetadata::symmetric_stops(2.0)
+    let fwd_bad_flag = GainMapMetadata::sdr_to_hdr_stops(2.0)
         .unwrap()
         .with_backward_direction(true);
     assert!(!fwd_bad_flag.is_valid());
@@ -626,7 +626,7 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
         SampleLayout::new(SampleType::U16, ChannelOrder::Gray)
             .with_packing(zenpixels::BitPacking::Shifted { bits: 10, shift: 2 }),
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -635,7 +635,7 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
         DualLayerHdrBuf::new(
             base,
             shifted_gm,
-            GainMapMetadata::symmetric_stops(2.0).unwrap()
+            GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap()
         )
         .is_err()
     );
@@ -646,10 +646,15 @@ fn opus_review_p1_5_p2_4_p2_12_gainmap_direction_shifted_and_banded_propagation(
         mastering: None,
     };
     let orig = ColorOrigin::from_cicp(Cicp::DISPLAY_P3);
-    let banded = zenpixels::BandedBuf::new(4, 4, PixelFormat::RGB8_SRGB, 24)
-        .unwrap()
-        .with_hdr(hdr)
-        .with_origin(orig.clone());
+    let banded = zenpixels::BandedBuf::new(
+        4,
+        4,
+        PixelFormat::RGB8_SRGB,
+        zenpixels::BandSizing::MaxBandBytes(24),
+    )
+    .unwrap()
+    .with_hdr(hdr)
+    .with_origin(orig.clone());
     assert_eq!(banded.bands().len(), 2);
     for band in banded.bands() {
         assert_eq!(band.hdr(), hdr);

@@ -56,7 +56,7 @@ You only need four types on day one:
 - `Orientation` — EXIF orientation (`Identity`, `Rotate90`, `FlipH`, etc.), carried directly on all image/planar/banded/dual-layer buffers and views.
 - `ColorOrigin` — Provenance of the file's original color signaling (`ColorOrigin::assumed()`, `from_cicp`, `from_icc`, `from_icc_and_cicp`), separate from the pixel's active `ColorSpace`.
 - `HdrMetadata` — Optional `ContentLightLevel` (MaxCLL / MaxFALL) and ST 2086 `MasteringDisplay`.
-- `SampleFacts` — Content facts (`all_opaque`, `all_grayscale`, `binary_alpha`, `float`, `depth`). Distinguish **measured/seeded facts** (`scan_facts(&view)`, `into_opaque_verified()`, or freshly filled `PixelBuf::new` / `new_white` / `new_zeroed`) from **caller-asserted facts** (`buf.assume_facts(facts)`, `view.with_assumed_facts(facts)`, `policy.with_source_facts(facts)`). Automatically cleared whenever mutable pixel access is taken.
+- `SampleFacts` — Content facts (`all_opaque`, `all_grayscale`, `binary_alpha`, `float`, `depth`). Distinguish **measured/seeded facts** (`scan_facts(&view)`, `into_opaque_verified()`, or freshly filled `PixelBuf::new` / `new_white` / `new_raw_zeroed`) from **caller-asserted facts** (`buf.assume_facts(facts)`, `view.with_assumed_facts(facts)`, `policy.with_source_facts(facts)`). Automatically cleared whenever mutable pixel access is taken.
 
 ---
 
@@ -64,7 +64,7 @@ You only need four types on day one:
 
 Not every fallible API returns `whereat::At<E>`. The boundary is consistent:
 
-1. **Located `whereat::At<E>`** — carrier constructors, `into_tight_buf`, plans, conversions, orientation, planar reconstruction, gain maps, CMS, measurements, and `PixelFormat::validate` / `Cicp::try_from_bytes` / `CicpTag::from_tag_bytes`:
+1. **Located `whereat::At<E>`** — carrier constructors, `into_tight_rows`, plans, conversions, orientation, planar reconstruction, gain maps, CMS, measurements, and `PixelFormat::validate` / `Cicp::try_from_bytes` / `CicpTag::from_tag_bytes`:
    ```rust
    use zenpixels::{BufferError, PixelFormat, PixelBuf};
 
@@ -91,7 +91,7 @@ Not every fallible API returns `whereat::At<E>`. The boundary is consistent:
    - `from_bytes_recover`, `from_typed_recover`, `from_parts_recover`, `from_external`, `from_external_mut` return `Result<PixelBuf, (At<BufferError>, OriginalInput)>`.
    - Zero-copy extractors (`into_vec_zero_copy`, `into_external`, `into_external_mut`, `into_imgvec_zero_copy`) return `Result<T, Self>` (returning the untouched `PixelBuf` on mismatch).
 
-**Naming rule for `try_`:** Standalone fallible methods use ordinary names (`from_typed`, `from_bytes`, `into_tight_buf`, `into_vec_zero_copy`, `make_mut`, `merge`, `project_cicp`). The `try_` prefix appears **only** when the same type already has a direct value-returning twin (`try_clone`/`clone`, `try_as_view_mut`/`as_view_mut`, `try_with_*`/`with_*`, `Cicp::try_from_bytes`/`Cicp::from_bytes`).
+**Naming rule for `try_`:** Standalone fallible methods use ordinary names (`from_typed`, `from_bytes`, `into_tight_rows`, `into_vec_zero_copy`, `make_mut`, `merge`, `project_cicp`). The `try_` prefix appears **only** when the same type already has a direct value-returning twin (`try_clone`/`clone`, `try_make_view_mut`/`as_view_mut`, `try_with_*`/`with_*`, `Cicp::try_from_bytes`/`Cicp::from_bytes_lenient`).
 
 ---
 
@@ -103,7 +103,7 @@ Not every fallible API returns `whereat::At<E>`. The boundary is consistent:
 |---|---|---|
 | Fresh black buffer (max alpha if `AlphaMode::Opaque`) | `PixelBuf::new(w, h, spec)` | Safe default; sets `facts.all_opaque = true` when opaque |
 | Fresh reference-white buffer | `PixelBuf::new_white(w, h, spec)` | `255` for U8, `65535` for U16, `1.0` for F32 |
-| Fast zeroed buffer for decoders that overwrite every pixel | `PixelBuf::new_zeroed(w, h, spec)` | Skips alpha-fill pass; **refuses** `AlphaMode::Opaque` on alpha-bearing layouts (`BufferError::UnverifiedOpaqueAlpha`) |
+| Fast zeroed buffer for decoders that overwrite every pixel | `PixelBuf::new_raw_zeroed(w, h, spec)` | Skips alpha-fill pass; **refuses** `AlphaMode::Opaque` on alpha-bearing layouts (`BufferError::UnverifiedOpaqueAlpha`) |
 | Fresh buffer preflighted for an interop target | `PixelBuf::new_for_interop(w, h, spec, target)` | Checks `InteropTarget` compatibility upfront (does not convert) |
 | Adopt tightly packed `Vec<u8>` | `PixelBuf::from_bytes(vec, w, h, spec)` | Handles odd-address allocators; use `from_bytes_recover` to get `vec` back on error |
 | Adopt typed `Vec<P>` (`u8`, `u16`, `f32`, `[u8; 3]`, `Rgb<u8>`, …) | `PixelBuf::from_typed(vec, w, h, spec)` | Validates `P` against `spec.layout` (annotate literals like `vec![255u8, ...]`); use `from_typed_recover` to recover on error |
@@ -115,20 +115,20 @@ Not every fallible API returns `whereat::At<E>`. The boundary is consistent:
 - `buf.relabel_color(color)` — changes `ColorSpace` only (layout unchanged; resets `origin` and domain-sensitive `facts`).
 - `buf.relabel_format(spec)` — allows channel-order relabeling with equal `sample`, `packing`, and `bytes_per_pixel` (no swizzle; clears `facts`).
 - `buf.reinterpret_bytes(spec)` — allows sample-type/packing changes with equal `bytes_per_pixel` and alignment (clears `facts`, `origin`, and `hdr`).
-- `buf.into_tight_buf() -> Result<PixelBuf, At<BufferError>>` — removes row padding (may allocate via CoW if backed by shared external storage; zero-copy when already tight).
+- `buf.into_tight_rows() -> Result<PixelBuf, At<BufferError>>` — compacts row stride to `row_bytes()` (may allocate via CoW if backed by shared external storage; zero-copy when already tight).
 
 ### Fast Opaque Decode (Zero-Overhead Fill-Then-Retag)
 
 ```rust
 use zenpixels::{AlphaMode, BufferError, PixelFormat, PixelBuf};
 
-// 1. `new_zeroed` refuses unverified `AlphaMode::Opaque` on alpha-bearing layouts:
+// 1. `new_raw_zeroed` refuses unverified `AlphaMode::Opaque` on alpha-bearing layouts:
 let opaque_rgba = PixelFormat::RGBA8_SRGB.with_alpha(AlphaMode::Opaque);
-let err = PixelBuf::new_zeroed(4, 4, opaque_rgba).unwrap_err();
+let err = PixelBuf::new_raw_zeroed(4, 4, opaque_rgba).unwrap_err();
 assert_eq!(*err.error(), BufferError::UnverifiedOpaqueAlpha);
 
 // 2. Allocate as Straight, write every pixel (with A = 255), then verify & retag zero-copy:
-let mut buf = PixelBuf::new_zeroed(4, 4, PixelFormat::RGBA8_SRGB)?;
+let mut buf = PixelBuf::new_raw_zeroed(4, 4, PixelFormat::RGBA8_SRGB)?;
 for y in 0..buf.height() {
     for px in buf.row_mut(y).chunks_exact_mut(4) {
         px.copy_from_slice(&[10, 20, 30, 255]);
@@ -158,11 +158,11 @@ assert_eq!(tile.stride_bytes(), 24);
 assert_eq!(tile.row(0).len(), 4 * 3);
 
 // Fallible CoW mutation promotes `buf` to owned storage without touching `shared`:
-buf.try_as_view_mut()?.row_mut(0)[0] = 99;
+buf.try_make_view_mut()?.row_mut(0)[0] = 99;
 assert_eq!(buf.row(0)[0], 99);
 // Mutable crops (`crop_view_mut` / `sub_rows_mut`) also promote fallibly on CoW;
 // `buf.into_crop(PixelRect::new(x, y, w, h))?` crops an owned `PixelBuf` in O(1) without copying pixels
-// (chain `.into_tight_buf()?` afterwards to compact).
+// (chain `.into_tight_rows()?` afterwards to compact row stride).
 assert_eq!(shared[0], 42);
 ```
 
@@ -216,7 +216,7 @@ assert_eq!(back.as_ptr(), ptr);
 
 | Task | Function / Type | Policy & Peak |
 |---|---|---|
-| Quick full-range sRGB 8-bit output | `to_rgb8(&view)`, `to_gray8(&view)` | `permissive().with_alpha(DiscardIfOpaque)` (refuses unproven alpha loss!) |
+| Quick full-range sRGB 8-bit output | `to_rgb8_if_opaque(&view)`, `to_gray8_if_opaque(&view)` | `permissive().with_alpha(DiscardIfOpaque)` (refuses unproven alpha loss!) |
 | Quick straight-alpha sRGB 8-bit output | `to_rgba8(&view)`, `to_bgra8(&view)` | `permissive()` |
 | One-shot conversion into a new `PixelBuf` | `convert_to_buf(&view, destination_format, &policy)` | Defaults to `PeakSource::Measured` (measured **only when HDR tone mapping needs a peak**); use `convert_to_buf_with_peak` for explicit `PeakSource` |
 | One-shot conversion into an existing sink | `convert_into(&src, &mut dst, &policy)` | Works with `PixelBuf`, `PixelViewMut`, `BandedBuf`; use `convert_into_with_peak` for explicit `PeakSource` |
@@ -239,7 +239,7 @@ assert_eq!(back.as_ptr(), ptr);
 
 ### HDR PQ → SDR Tone Mapping & SIMD/Scalar 0-Bit Parity
 
-Plain `ConvertPolicy::permissive()` refuses unanchored PQ→SDR routes (`ConvertError::MissingHdrAnchor`) until you configure a diffuse white anchor and tone mapper (`Bt2446A`, enabled via the `bt2446a` Cargo feature; use `Bt2446A::pipeline_managed()` or explicit typed `Bt2446A::with_peaks(Nits::new(1000.0).unwrap(), Nits::new(100.0).unwrap())`):
+Plain `ConvertPolicy::permissive()` refuses unanchored PQ→SDR routes (`ConvertError::MissingHdrAnchor`) until you configure a diffuse white anchor and tone mapper (`Bt2446A`, enabled via the `bt2446a` Cargo feature; use `Bt2446A::pipeline_managed()` or explicit typed `Bt2446A::with_peaks(Nits::new_positive(1000.0).unwrap(), Nits::new_positive(100.0).unwrap())`):
 
 ```rust
 use std::sync::Arc;
@@ -248,7 +248,7 @@ use zenpixels_convert::{
     formats,
 };
 
-let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap())
+let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap())
     .with_tone_mapper(Arc::new(Bt2446A::pipeline_managed()));
 
 // Whole-image streaming peak measurement (O(1) row memory):
@@ -261,7 +261,7 @@ let plan = ImagePlan::build(
 let sdr_buf = plan.execute(&pq16_buf)?;
 
 // Streaming row-by-row with explicit resolved source peak (e.g. 1000 nits) + SIMD vs scalar parity:
-let peak = Nits::new(1000.0);
+let peak = Nits::new_positive(1000.0);
 let simd_row = RowPlan::build(
     &formats::RGB16_BT2100_PQ,
     &formats::RGB8_SRGB,
@@ -292,7 +292,7 @@ let adobe_spec = PixelFormat::new(
     SampleLayout::RGB8,
     ColorSpace::Icc {
         profile: Arc::from(icc_profiles::ADOBE_RGB),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     },
@@ -454,30 +454,30 @@ assert_eq!(baked.orientation(), Orientation::Identity);
 |---|---|---|---|
 | Replace EXIF metadata | `with_orientation(self, o)` / `set_orientation(&mut self, o)` | None (O(1)) | `o` |
 | Compose EXIF metadata (`old.then(delta)`) | `compose_orientation(self, delta)` | None (O(1)) | `old.then(delta)` |
-| Physically apply **explicit** `o` into a new/owned buffer (ignores pending metadata) | `apply_orientation(&view, o)` / `apply_orientation_owned(buf, o)` / `apply_orientation_banded(&bands, o, max_bytes)` | Yes (`apply_orientation_owned(_, Identity)` is zero-copy) | `Identity` |
+| Physically apply **explicit** `o` into a new/owned buffer (ignores pending metadata) | `apply_orientation(&view, o)` / `apply_orientation_owned(buf, o)` / `apply_orientation_banded(&bands, o, sizing)` | Yes (`apply_orientation_owned(_, Identity)` is zero-copy) | `Identity` |
 | Physically apply **explicit** `o` into a caller sink | `apply_orientation_into(&view, o, &mut dst)` / `apply_orientation_banded_into(&bands, o, &mut dst_bands)` | Yes (zero allocation) | Unchanged on caller's `dst` (pixel write only) |
-| Physically **bake** pending metadata | `bake_orientation(&view)` / `bake_orientation_owned(buf)` / `bake_orientation_banded(&bands, max_bytes)` | Yes (`bake_orientation_owned` is zero-copy when `Identity`) | `Identity` |
+| Physically **bake** pending metadata | `bake_orientation(&view)` / `bake_orientation_owned(buf)` / `bake_orientation_banded(&bands, sizing)` | Yes (`bake_orientation_owned` is zero-copy when `Identity`) | `Identity` |
 | Dual-layer gain-map physical bake | `gainmap::bake_dual_layer_orientation(&view)` / `gainmap::bake_dual_layer_orientation_after(&view, delta)` | Both layers | `Identity` |
 
 ### Gigapixel `BandedBuf`
 
-`BandedBuf` splits huge images into row bands bounded by `max_band_bytes` (default `DEFAULT_MAX_BAND_BYTES`) and implements both `PixelSource` and `PixelSink`:
+`BandedBuf` splits huge images into row bands sized via `BandSizing::{MaxBandBytes(usize), RowsPerBand(u32)}` (default `BandSizing::DEFAULT`) and implements both `PixelSource` and `PixelSink`:
 
 ```rust
 use zenpixels_convert::{
-    BandedBuf, ConvertPolicy, ImagePlan, PixelFormat, Orientation, PeakSource,
+    BandSizing, BandedBuf, ConvertPolicy, ImagePlan, Orientation, PeakSource, PixelFormat,
     apply_orientation_banded,
 };
 
-let mut src = BandedBuf::new(8, 6, PixelFormat::RGB8_SRGB, 48)?;
+let mut src = BandedBuf::new(8, 6, PixelFormat::RGB8_SRGB, BandSizing::MaxBandBytes(48))?;
 assert!(src.band_count() > 1);
 src.row_mut(0)[0..3].copy_from_slice(&[200, 100, 50]);
 
-let mut dst = BandedBuf::new(8, 6, PixelFormat::RGBA8_SRGB, 64)?;
+let mut dst = BandedBuf::new(8, 6, PixelFormat::RGBA8_SRGB, BandSizing::MaxBandBytes(64))?;
 ImagePlan::build(src.format(), dst.format(), &ConvertPolicy::permissive(), PeakSource::Measured)?
     .execute_into(&src, &mut dst)?;
 
-let rotated = apply_orientation_banded(&src, Orientation::Rotate90, 48)?;
+let rotated = apply_orientation_banded(&src, Orientation::Rotate90, BandSizing::MaxBandBytes(48))?;
 assert_eq!((rotated.width(), rotated.height()), (6, 8));
 ```
 
@@ -565,12 +565,12 @@ assert_eq!(compact.format().layout, SampleLayout::GRAY8);
 
 // Zero-reallocation in-place compaction on opaque RGBA8:
 // 1. Retag alpha to AlphaMode::Opaque without shifting lanes:
-compact_in_place(&mut rgba8_opaque, AlphaCompaction::RetagOpaque);
+compact_in_place(&mut rgba8_opaque, AlphaCompaction::RetagOpaque)?;
 assert_eq!(rgba8_opaque.format().color.alpha(), AlphaMode::Opaque);
 assert_eq!(rgba8_opaque.format().layout, SampleLayout::RGBA8);
 
 // 2. Physically drop unused alpha lane in-place (reusing the same allocation):
-compact_in_place(&mut rgba8_opaque, AlphaCompaction::DropUnusedLanes);
+compact_in_place(&mut rgba8_opaque, AlphaCompaction::DropUnusedLanes)?;
 assert_eq!(rgba8_opaque.format().layout, SampleLayout::RGB8);
 ```
 
@@ -592,7 +592,8 @@ let owned_img = ImgVec::new(vec![top_left; 4], 2, 2);
 let back_from_imgref = PixelBuf::from_imgvec(owned_img, ColorSpace::SRGB)?;
 
 // `image` 0.25 round-trip (propagates CICP color space automatically; use
-// `from_rgb8_image_with_color` / `from_rgba8_image_with_color` to attach an explicit ColorSpace):
+// `from_dynamic_image_with_color` / `from_rgb8_image_with_color` / `from_rgba8_image_with_color`
+// to attach an explicit ColorSpace):
 let dyn_img = buf.into_dynamic_image()?;
 let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 ```
@@ -604,7 +605,7 @@ let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 | Term | Meaning in `zenpixels` 0.5 |
 |---|---|
 | **`whereat::At<E>`** | Error wrapper pairing the typed error `E` with source-location trace frames. Match the inner enum via `*err.error()` (or take `(E, trace)` via `err.decompose()`). |
-| **`SampleFacts`** | Proven or caller-asserted content invariants (`all_opaque`, `all_grayscale`, `binary_alpha`, `float`, `depth`). Measured via `scan_facts(&view)` / `into_opaque_verified()`, seeded by `PixelBuf::new`/`new_white`/`new_zeroed`, or asserted via `assume_facts` / `with_assumed_facts` / `policy.with_source_facts`. Cleared on mutable access. |
+| **`SampleFacts`** | Proven or caller-asserted content invariants (`all_opaque`, `all_grayscale`, `binary_alpha`, `float`, `depth`). Measured via `scan_facts(&view)` / `into_opaque_verified()`, seeded by `PixelBuf::new`/`new_white`/`new_raw_zeroed`, or asserted via `assume_facts` / `with_assumed_facts` / `policy.with_source_facts`. Cleared on mutable access. |
 | **`ColorOrigin`** | File-level provenance (`assumed()`, `from_cicp`, `from_icc`, `from_icc_and_cicp`) recording *how the file originally signaled color*, distinct from the buffer's active `ColorSpace`. |
 | **`OutputSignaling`** | Encoder signaling policy (`Auto`, `SameAsOrigin`, `CicpOnly`, `EmbedIcc`, `CustomIcc`, `Strip`) controlling which CICP/ICC metadata `OutputPlan` emits alongside encoded pixels. |
 | **`CICP` / ITU-T H.273** | 4-byte wire code `(color_primaries, transfer_characteristics, matrix_coefficients, full_range)` used in PNG, AVIF, HEIF, JPEG XL, and video. `CicpTag` also supports the 44-byte ICC.1 custom-primaries amendment. |
@@ -615,8 +616,8 @@ let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 | **`BitPacking`** | How coded integers sit inside `U8`/`U16`/`U32` storage: `Full`, `Lsb { bits }` (`U10_LSB`), `Msb { bits }` (`P010`), or packed-word `Bitfields` (`RGB565`, `RGB10A2`). |
 | **`CodePlane`** | Zero-copy borrowed reader (`CodePlaneMut` writer) exposing raw coded integer samples (`0..=1023`, etc.) from bit-packed or multi-component planes without color conversion. |
 | **`ChromaSiting`** | Subsampled chroma sample position relative to luma pixels (also called chroma location): `Unknown`, `Center` (JPEG), `Left` (H.264/HEVC/AV1), `TopLeft` (BT.2020), `Top`, `BottomLeft`, `Bottom`. |
-| **`Nits` & `DiffuseWhite`** | Typed luminance in cd/m² (`Nits::new(100.0).unwrap()` or const `Nits::new_or_panic(100.0)`). `DiffuseWhite` anchors SDR paper white in HDR workflows (e.g. `DiffuseWhite::BT2408` = `203` cd/m²). |
+| **`Nits` & `DiffuseWhite`** | Typed luminance in cd/m² (`Nits::new_positive(100.0).unwrap()` or const `Nits::new_positive_or_panic(100.0)`). `DiffuseWhite` anchors SDR paper white in HDR workflows (e.g. `DiffuseWhite::BT2408` = `203` cd/m²). |
 | **`PeakSource`** | How HDR→SDR tone mapping obtains source peak luminance on whole-image plans: `Measured` (streaming O(1) scan when needed), `Declared` (`MaxCLL` / `MasteringDisplay`), or `Fixed(Nits)`. |
 | **`HlgMode`** | Distinguishes `HlgMode::Scene` (scene-referred ARIB STD-B67, representable in 4-byte CICP) from `HlgMode::Display(HlgRendering)` (BT.2100 display-rendered at e.g. `1000` nits; cannot be carried by CICP alone). |
 | **`FormatCow<'a>`** | Borrow-or-share `PixelFormat` wrapper inside views (`Borrowed(&'a PixelFormat)` for 0-alloc views vs `Owned(Arc<PixelFormat>)` for dynamic specs). |
-| **`try_as_view_mut` / `make_mut`** | Fallible copy-on-write (CoW) promotion for `PixelBuf` / `PlaneBuf` / `PlanarBuf` backed by immutable external storage (`Arc<[u8]>`, `&'static [u8]`, FFI pools). |
+| **`try_make_view_mut` / `make_mut`** | Fallible copy-on-write (CoW) promotion for `PixelBuf` / `PlaneBuf` / `PlanarBuf` backed by immutable external storage (`Arc<[u8]>`, `&'static [u8]`, FFI pools). |

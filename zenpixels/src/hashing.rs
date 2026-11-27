@@ -22,16 +22,19 @@ use crate::layout::{BitPacking, ChannelOrder, SampleType};
 use crate::sample::{CodePlane, CodePlaneMut};
 
 /// Fields included in a portable pixel fingerprint. Storage padding is always excluded.
+///
+/// Note: [`Orientation`](crate::Orientation), [`ColorOrigin`](crate::ColorOrigin), and
+/// [`HdrMetadata`](crate::HdrMetadata) are never included in any variant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum HashInclusions {
-    /// Active sample values and structural geometry only, without color interpretation.
-    SamplesOnly,
-    /// Active samples, geometry, layout, bit packing, alpha mode, and current color space.
-    Pixels,
-    /// Everything in [`Pixels`](Self::Pixels), plus cached [`SampleFacts`] where present.
+    /// Active sample values, dimensions, and physical sample layout/packing only (no color space or facts).
+    SamplesAndLayout,
+    /// Everything in [`SamplesAndLayout`](Self::SamplesAndLayout), plus alpha mode and current [`ColorSpace`](crate::ColorSpace).
+    PixelsAndColor,
+    /// Everything in [`PixelsAndColor`](Self::PixelsAndColor), plus cached [`SampleFacts`] where present.
     #[default]
-    All,
+    PixelsColorAndFacts,
 }
 
 // Normalize numeric Hash writes from derived metadata impls so enum discriminants and
@@ -135,9 +138,9 @@ fn begin<H: Hasher>(state: &mut H, domain: &[u8], inclusions: HashInclusions) {
     state.write(b"zenpixels/hash/v2\0");
     state.write(domain);
     state.write(&[match inclusions {
-        HashInclusions::SamplesOnly => 0,
-        HashInclusions::Pixels => 1,
-        HashInclusions::All => 2,
+        HashInclusions::SamplesAndLayout => 0,
+        HashInclusions::PixelsAndColor => 1,
+        HashInclusions::PixelsColorAndFacts => 2,
     }]);
 }
 
@@ -186,11 +189,11 @@ fn hash_packed_header<H: Hasher>(
     spec.layout.order.hash(&mut p);
     spec.layout.packing.hash(&mut p);
     match inclusions {
-        HashInclusions::SamplesOnly => {}
-        HashInclusions::Pixels => {
+        HashInclusions::SamplesAndLayout => {}
+        HashInclusions::PixelsAndColor => {
             spec.color.hash(&mut p);
         }
-        HashInclusions::All => {
+        HashInclusions::PixelsColorAndFacts => {
             spec.color.hash(&mut p);
             facts.hash(&mut p);
         }
@@ -227,7 +230,7 @@ fn hash_packed_row<H: Hasher>(row: &[u8], width: u32, spec: &PixelFormat, state:
         for px in row.chunks_exact(word_bytes).take(width as usize) {
             let w = read_ne_u32(layout.sample, px);
             for c in 0..active_channels {
-                let code = layout.packing.extract_code(layout.sample, w, c);
+                let code = layout.packing.extract_code(layout.sample, c, w);
                 state.write(&code.to_le_bytes());
             }
         }
@@ -236,7 +239,7 @@ fn hash_packed_row<H: Hasher>(row: &[u8], width: u32, spec: &PixelFormat, state:
         for px in row.chunks_exact(bpp).take(width as usize) {
             for c in 0..active_channels {
                 let w = read_ne_u32(layout.sample, &px[c * elem_size..]);
-                let code = layout.packing.extract_code(layout.sample, w, c);
+                let code = layout.packing.extract_code(layout.sample, c, w);
                 state.write(&code.to_le_bytes());
             }
         }
@@ -266,7 +269,7 @@ fn hash_plane_into<H: Hasher>(plane: &PlaneView<'_>, inclusions: HashInclusions,
         spec.sample.hash(&mut p);
         spec.components.hash(&mut p);
         spec.packing.hash(&mut p);
-        if !matches!(inclusions, HashInclusions::SamplesOnly) {
+        if !matches!(inclusions, HashInclusions::SamplesAndLayout) {
             spec.role.hash(&mut p);
             spec.subsampling.hash(&mut p);
         }
@@ -282,7 +285,7 @@ fn hash_plane_into<H: Hasher>(plane: &PlaneView<'_>, inclusions: HashInclusions,
             for px in row.chunks_exact(elem_size).take(plane.width() as usize) {
                 let w = read_ne_u32(spec.sample, px);
                 for c in 0..comps {
-                    let code = spec.packing.extract_code(spec.sample, w, c);
+                    let code = spec.packing.extract_code(spec.sample, c, w);
                     state.write(&code.to_le_bytes());
                 }
             }
@@ -290,7 +293,7 @@ fn hash_plane_into<H: Hasher>(plane: &PlaneView<'_>, inclusions: HashInclusions,
             for px in row.chunks_exact(elem_bytes).take(plane.width() as usize) {
                 for c in 0..comps {
                     let w = read_ne_u32(spec.sample, &px[c * elem_size..]);
-                    let code = spec.packing.extract_code(spec.sample, w, c);
+                    let code = spec.packing.extract_code(spec.sample, c, w);
                     state.write(&code.to_le_bytes());
                 }
             }
@@ -305,7 +308,7 @@ fn hash_planar_into<H: Hasher>(view: &PlanarView<'_>, inclusions: HashInclusions
         view.width().hash(&mut p);
         view.height().hash(&mut p);
         view.planes().len().hash(&mut p);
-        if !matches!(inclusions, HashInclusions::SamplesOnly) {
+        if !matches!(inclusions, HashInclusions::SamplesAndLayout) {
             view.crop_origin().hash(&mut p);
             view.chroma_siting().hash(&mut p);
             view.color().hash(&mut p);

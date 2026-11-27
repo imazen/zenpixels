@@ -73,7 +73,8 @@ pub(crate) type GainMapCombineFn =
 /// Dead-stripping bundle of optional SIMD accelerators.
 ///
 /// Build a custom subset at compile time using `const` helpers (`SCALAR`,
-/// `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `ALL`, `.with_*()`, `.union()`).
+/// `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `ROW_PIPELINE`, `ALL`, `.with_*()`,
+/// `.merge_prefer_self()`).
 #[derive(Clone, Copy)]
 pub struct Accelerators {
     /// `garb` SIMD U8 byte-only layout fast paths (`RGBA↔BGRA`, `RGB↔RGBA`, `Gray→RGBA`).
@@ -238,7 +239,7 @@ impl Default for Accelerators {
     fn default() -> Self {
         #[cfg(feature = "fast")]
         {
-            Self::ALL
+            Self::ROW_PIPELINE
         }
         #[cfg(not(feature = "fast"))]
         {
@@ -323,7 +324,9 @@ impl Accelerators {
 
     /// ISO 21496-1 / UltraHDR gain-map SIMD kernels only (opt-in so `RowPlan`-only binaries dead-strip them).
     ///
-    /// Combine with `Self::ALL.with_gainmap()` or `Self::WEB_SDR.union(Self::GAINMAP)` when applying gain maps.
+    /// Included in [`ALL`](Self::ALL), excluded from [`ROW_PIPELINE`](Self::ROW_PIPELINE) and
+    /// `Accelerators::default()`. Combine with `Self::WEB_SDR.merge_prefer_self(Self::GAINMAP)` when
+    /// minimizing binary size.
     #[cfg(feature = "gainmap")]
     pub const GAINMAP: Self = Self::SCALAR.with_gainmap();
 
@@ -331,11 +334,14 @@ impl Accelerators {
     #[cfg(feature = "oklab")]
     pub const OKLAB: Self = Self::SCALAR.with_strip_simd().with_oklab();
 
-    /// Every enabled `RowPlan` SIMD accelerator in this build (excludes opt-in gain-map SIMD
-    /// so non-gainmap binaries dead-strip it completely; use `Accelerators::ALL.with_gainmap()`
-    /// for accelerated gain-map reconstruction).
-    pub const ALL: Self = {
-        let base = Self::WEB_SDR.union(Self::HDR).with_bt709().with_gamma22();
+    /// Every enabled `RowPlan` / `ImagePlan` SIMD accelerator in this build (excludes opt-in
+    /// gain-map SIMD so non-gainmap binaries dead-strip it completely; this is also
+    /// `Accelerators::default()` when `feature = "fast"` is enabled).
+    pub const ROW_PIPELINE: Self = {
+        let base = Self::WEB_SDR
+            .merge_prefer_self(Self::HDR)
+            .with_bt709()
+            .with_gamma22();
         #[cfg(feature = "oklab")]
         {
             base.with_oklab()
@@ -343,6 +349,22 @@ impl Accelerators {
         #[cfg(not(feature = "oklab"))]
         {
             base
+        }
+    };
+
+    /// Every compiled SIMD accelerator in this build, **including** `GAINMAP` when the
+    /// `gainmap` feature is enabled.
+    ///
+    /// For `RowPlan`-only binaries that want to dead-strip gain-map SIMD (`+0 B`), use
+    /// [`ROW_PIPELINE`](Self::ROW_PIPELINE) instead.
+    pub const ALL: Self = {
+        #[cfg(feature = "gainmap")]
+        {
+            Self::ROW_PIPELINE.with_gainmap()
+        }
+        #[cfg(not(feature = "gainmap"))]
+        {
+            Self::ROW_PIPELINE
         }
     };
 
@@ -481,10 +503,12 @@ impl Accelerators {
         self
     }
 
-    /// Combine two accelerator bundles (`self` takes precedence where both are `Some`).
+    /// Combine two accelerator bundles (`self` takes precedence where both enable the same slot).
     #[inline]
     #[must_use]
-    pub const fn union(self, other: Self) -> Self {
+    #[doc(alias = "union")]
+    pub const fn merge_prefer_self(self, fallback: Self) -> Self {
+        let other = fallback;
         macro_rules! pick {
             ($field:ident) => {
                 if self.$field.is_some() {
@@ -558,9 +582,14 @@ pub fn install(accel: Accelerators) -> bool {
     GLOBAL_ACCEL.set(Box::new(accel)).is_ok()
 }
 
-/// Enable all compiled SIMD accelerators process-wide.
+/// Enable all compiled SIMD accelerators process-wide (including gain-map SIMD if compiled).
 pub fn enable_all() -> bool {
     install(Accelerators::ALL)
+}
+
+/// Enable all compiled `RowPlan` / `ImagePlan` SIMD accelerators process-wide (excluding gain-map SIMD).
+pub fn enable_row_pipeline() -> bool {
+    install(Accelerators::ROW_PIPELINE)
 }
 
 /// Enable common web SDR accelerators (`garb` layouts + strip SIMD + sRGB + 3×3 gamut) process-wide.

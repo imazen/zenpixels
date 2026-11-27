@@ -315,7 +315,7 @@ fn prepared_interpretation_retains_authority_and_rejects_changes() {
     let icc: Arc<[u8]> = Arc::from([1, 2, 3, 4]);
     let c = ColorSpace::Icc {
         profile: icc.clone(),
-        channels: 3,
+        color_channels: 3,
         alpha: AlphaMode::None,
         intent: RenderingIntent::RelativeColorimetric,
     };
@@ -348,7 +348,7 @@ fn prepared_interpretation_retains_authority_and_rejects_changes() {
             .unwrap()
             .with_color(ColorSpace::Icc {
                 profile: Arc::from([4, 3, 2, 1]),
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             })

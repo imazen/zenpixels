@@ -117,7 +117,8 @@ fn cases() -> Vec<Case> {
     let p_soft = ConvertPolicy::permissive().with_gamut(GamutPolicy::SoftCompress);
     let p_matte = ConvertPolicy::permissive().with_alpha(AlphaPolicy::CompositeOnto(Color::BLACK));
     let p_hdr_work = ConvertPolicy::working_linear();
-    let p_hdr_sdr = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
+    let p_hdr_sdr =
+        ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap());
 
     let rgbf32_srgb = rgb(
         SampleLayout::RGBF32,
@@ -455,7 +456,7 @@ fn cases() -> Vec<Case> {
             src: rgb16_pq,
             dst: PixelFormat::RGB8_SRGB,
             policy: p_hdr_sdr,
-            hdr_peak: Some(Nits::new(1000.0).unwrap()),
+            hdr_peak: Some(Nits::new_positive(1000.0).unwrap()),
         },
         // Gray, Premul, Matte
         Case {
@@ -640,7 +641,7 @@ fn main() {
             let gm_spec = PixelFormat::new(
                 SampleLayout::GRAY8,
                 ColorSpace::Untagged {
-                    channels: 1,
+                    total_channels: 1,
                     alpha: AlphaMode::None,
                 },
             );
@@ -666,7 +667,7 @@ fn main() {
                     *b = ((y as usize * 53 + i * 29 + 13) % 256) as u8;
                 }
             }
-            let meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
+            let meta = GainMapMetadata::sdr_to_hdr_stops(2.5).unwrap();
             let base_rgb8 = Arc::new(base_rgb8);
             let base_rgba8 = Arc::new(base_rgba8);
             let gm_qres = Arc::new(gm_qres);

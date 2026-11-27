@@ -188,22 +188,28 @@ pub struct Cicp {
 impl Cicp {
     /// sRGB RGB `(1, 13, 0, true)`.
     pub const SRGB: Self = Self::new(1, 13, 0, true);
-    /// DCI-P3 (SMPTE RP 431-2 theater white) RGB `(11, 13, 0, true)`.
-    pub const DCI_P3: Self = Self::new(11, 13, 0, true);
-    /// Display P3 (D65 white) RGB `(12, 13, 0, true)`.
+    /// DCI-P3 primaries (SMPTE RP 431-2 theater white) with sRGB transfer `(11, 13, 0, true)`.
+    pub const DCI_P3_SRGB: Self = Self::new(11, 13, 0, true);
+    /// DCI-P3 digital cinema (SMPTE RP 431-2 primaries + SMPTE ST 428-1 2.6 transfer) `(11, 17, 0, true)`.
+    pub const DCI_P3_CINEMA: Self = Self::new(11, 17, 0, true);
+    /// Display P3 (D65 white, sRGB transfer) RGB `(12, 13, 0, true)`.
     pub const DISPLAY_P3: Self = Self::new(12, 13, 0, true);
     /// Linear sRGB RGB `(1, 8, 0, true)`.
     pub const LINEAR_SRGB: Self = Self::new(1, 8, 0, true);
     /// BT.709 RGB `(1, 1, 0, true)`.
     pub const BT709_RGB: Self = Self::new(1, 1, 0, true);
-    /// BT.2100 PQ RGB `(9, 16, 0, true)`.
+    /// BT.2100 PQ RGB full range `(9, 16, 0, true)`.
     pub const BT2100_PQ_RGB: Self = Self::new(9, 16, 0, true);
-    /// BT.2100 PQ YCbCr `(9, 16, 9, true)`.
-    pub const BT2100_PQ: Self = Self::new(9, 16, 9, true);
-    /// BT.2100 HLG RGB `(9, 18, 0, true)`.
+    /// BT.2100 PQ YCbCr full range `(9, 16, 9, true)`.
+    pub const BT2100_PQ_YCBCR_FULL: Self = Self::new(9, 16, 9, true);
+    /// BT.2100 PQ YCbCr limited/narrow broadcast range `(9, 16, 9, false)`.
+    pub const BT2100_PQ_YCBCR_LIMITED: Self = Self::new(9, 16, 9, false);
+    /// BT.2100 HLG RGB full range `(9, 18, 0, true)`.
     pub const BT2100_HLG_RGB: Self = Self::new(9, 18, 0, true);
-    /// BT.2100 HLG YCbCr `(9, 18, 9, true)`.
-    pub const BT2100_HLG: Self = Self::new(9, 18, 9, true);
+    /// BT.2100 HLG YCbCr full range `(9, 18, 9, true)`.
+    pub const BT2100_HLG_YCBCR_FULL: Self = Self::new(9, 18, 9, true);
+    /// BT.2100 HLG YCbCr limited/narrow broadcast range `(9, 18, 9, false)`.
+    pub const BT2100_HLG_YCBCR_LIMITED: Self = Self::new(9, 18, 9, false);
 
     /// Construct a CICP tuple from raw H.273 codes.
     #[inline]
@@ -239,7 +245,7 @@ impl Cicp {
     /// use [`try_from_bytes`](Self::try_from_bytes).
     #[inline]
     #[must_use]
-    pub const fn from_bytes(bytes: [u8; 4]) -> Self {
+    pub const fn from_bytes_lenient(bytes: [u8; 4]) -> Self {
         Self::new(bytes[0], bytes[1], bytes[2], bytes[3] != 0)
     }
 

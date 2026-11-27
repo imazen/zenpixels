@@ -14,13 +14,13 @@
 //!   [`ColorSpace`] matches the source's derived color interpretation (no silent color
 //!   conversion) and propagating `src.orientation()` onto `dst`.
 //! - [`reconstruct_planar_f32`] allocates a full-range `RGBF32` / `RGBAF32` [`PixelBuf`]
-//!   using [`PlanarReconstructionOptions::nearest()`].
+//!   with caller-chosen [`PlanarReconstructionOptions`].
 
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ChromaSiting, ColorSpace, PixelBuf, PixelFormat, PixelViewMut,
-    PlanarView, PlaneFormat, PlaneRole, PlaneView, Primaries, SampleLayout, SampleType,
-    SignalRange,
+    AlphaMode, ChannelOrder, ChromaSiting, ColorSpace, PixelBuf, PixelFormat, PixelRect,
+    PixelViewMut, PlanarView, PlaneFormat, PlaneRole, PlaneView, Primaries, SampleLayout,
+    SampleType, SignalRange,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -129,7 +129,7 @@ fn validate_plane(
         return Err(err_at(ConvertError::UnsupportedRoute));
     }
     let (ew, eh) = spec
-        .cropped_plane_dimensions(frame_w, frame_h, (crop_x, crop_y))
+        .cropped_plane_dimensions(PixelRect::new(crop_x, crop_y, frame_w, frame_h))
         .ok_or_else(|| err_at(ConvertError::DimensionMismatch))?;
     if plane.width() != ew || plane.height() != eh || plane.width() == 0 || plane.height() == 0 {
         return Err(err_at(ConvertError::DimensionMismatch));
@@ -562,19 +562,23 @@ fn attach_planar_metadata(mut out: PixelBuf, src: &PlanarView<'_>) -> PixelBuf {
 ///
 /// Handles 3-plane YCbCr (`Y`, `Cb`, `Cr`), 2-plane semi-planar YCbCr (`Y`, `CbCr` / `CrCb`,
 /// e.g. NV12 / P010), 3-plane RGB (`R`, `G`, `B`), and 1-plane monochrome (`Y`), each with
-/// optional `Alpha` plane, using [`PlanarReconstructionOptions::nearest()`].
+/// optional `Alpha` plane, using caller-chosen [`PlanarReconstructionOptions`] (e.g.
+/// [`PlanarReconstructionOptions::bilinear()`] or [`PlanarReconstructionOptions::nearest()`]).
 ///
 /// Refuses views missing required range, color space (`Rgb` / `Gray`), or (for YCbCr chroma
 /// views) recognized ITU-T H.273 [`MatrixCoefficients`](zenpixels::MatrixCoefficients) with
 /// [`ConvertError::UnsupportedRoute`].
-pub fn reconstruct_planar_f32(src: &PlanarView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+pub fn reconstruct_planar_f32(
+    src: &PlanarView<'_>,
+    options: &PlanarReconstructionOptions,
+) -> Result<PixelBuf, At<ConvertError>> {
     let parsed = parse_planar(src)?;
     let layout = if parsed.alpha_plane().is_some() {
         SampleLayout::RGBAF32
     } else {
         SampleLayout::RGBF32
     };
-    reconstruct_planar_to_buf(src, layout, &PlanarReconstructionOptions::nearest())
+    reconstruct_planar_to_buf(src, layout, options)
 }
 
 /// Reconstruct an interleaved [`PixelBuf`] with caller-chosen [`SampleLayout`] (`RGB8`, `RGBA8`,
@@ -826,10 +830,10 @@ fn reconstruct_ycbcr_planes(
     let cr_oy0 = oy / u32::from(cr_vy);
 
     let (cb_dx, cb_dy) = effective_siting
-        .and_then(|s| s.offset_in_cell(cb_hx, cb_vy))
+        .and_then(|s| s.offset_in_luma_pixels_for_divisors(cb_hx, cb_vy))
         .unwrap_or((0.0, 0.0));
     let (cr_dx, cr_dy) = effective_siting
-        .and_then(|s| s.offset_in_cell(cr_hx, cr_vy))
+        .and_then(|s| s.offset_in_luma_pixels_for_divisors(cr_hx, cr_vy))
         .unwrap_or((0.0, 0.0));
 
     let bilinear = options.upsample == ChromaUpsample::Bilinear && any_subsampled;
@@ -1271,5 +1275,5 @@ fn read_plane_code(spec: PlaneFormat, row: &[u8], x: usize, comp: usize) -> u32 
         SampleType::U32 => u32::from_ne_bytes([row[off], row[off + 1], row[off + 2], row[off + 3]]),
         _ => 0,
     };
-    spec.packing.extract_code(spec.sample, w, comp)
+    spec.packing.extract_code(spec.sample, comp, w)
 }

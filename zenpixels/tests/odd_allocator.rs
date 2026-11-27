@@ -151,7 +151,7 @@ fn from_bytes_f16_and_f32_and_f64_copy_safely_from_odd_address() {
     let spec_f64 = PixelFormat::new(
         SampleLayout::new(SampleType::F64, zenpixels::ChannelOrder::Gray),
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: zenpixels::AlphaMode::None,
         },
     );
@@ -200,7 +200,7 @@ fn allocating_constructors_and_into_contiguous_preserve_alignment() {
         PixelFormat::RGB16_SRGB,
     )
     .unwrap();
-    let tight = buf.into_tight_buf().unwrap();
+    let tight = buf.into_tight_rows().unwrap();
     assert_eq!(
         tight.byte_offset(),
         1,

@@ -10,9 +10,9 @@ use zenpixels_convert::PixelBuf;
 #[cfg(feature = "gainmap")]
 use zenpixels_convert::gainmap::{GainMapApplyConfig, apply_gain_map_with, extract_gain_map};
 use zenpixels_convert::{
-    AlphaMode, BitPacking, ColorSpace, ConvertPolicy, PixelFormat, PlanarBuf, PlaneFormat,
-    PlaneRole, Primaries, RowPlan, SampleType, SignalRange, Transfer, YcbcrMatrix,
-    reconstruct_planar_f32,
+    AlphaMode, BitPacking, ColorSpace, ConvertPolicy, PixelFormat, PlanarBuf,
+    PlanarReconstructionOptions, PlaneFormat, PlaneRole, Primaries, RowPlan, SampleType,
+    SignalRange, Transfer, YcbcrMatrix, reconstruct_planar_f32,
 };
 #[cfg(feature = "gainmap")]
 use zenpixels_convert::{DiffuseWhite, GainMapMetadata, Unstoppable};
@@ -44,12 +44,19 @@ fn row_plan_convert_row_allocates_zero_bytes() {
 #[test]
 fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_banded() {
     use zenpixels_convert::{
-        BandedBuf, ContentLightLevel, ConvertError, HdrMetadata, ImagePlan, LightLevelMethod,
-        MasteringDisplay, Nits, PeakSource, PixelSink, PixelSource, measure_content_light_level,
+        BandSizing, BandedBuf, ContentLightLevel, ConvertError, HdrMetadata, ImagePlan,
+        LightLevelMethod, MasteringDisplay, Nits, PeakSource, PixelSink, PixelSource,
+        measure_content_light_level,
     };
     let (w, h) = (128u32, 128u32); // 128x128 RGBF32 would be 196,608 B
     let mut hdr_buf = PixelBuf::new(w, h, PixelFormat::RGB16_BT2100_PQ).unwrap();
-    let mut hdr_banded = BandedBuf::new(w, h, PixelFormat::RGB16_BT2100_PQ, 16 * 1024).unwrap();
+    let mut hdr_banded = BandedBuf::new(
+        w,
+        h,
+        PixelFormat::RGB16_BT2100_PQ,
+        BandSizing::MaxBandBytes(16 * 1024),
+    )
+    .unwrap();
     assert!(hdr_banded.bands().len() >= 4);
 
     // Fill both with identical HDR PQ ramp (peak ~1000 nits ≈ PQ code 0.7518 * 65535 ≈ 49270)
@@ -67,7 +74,8 @@ fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_ba
         hdr_banded.sink_row_mut(y).copy_from_slice(bytes);
     }
 
-    let policy = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap());
+    let policy =
+        ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap());
     let plan = ImagePlan::build(
         PixelFormat::RGB16_BT2100_PQ,
         PixelFormat::RGB8_SRGB,
@@ -77,7 +85,13 @@ fn hdr_to_sdr_measured_peak_streams_without_full_image_allocation_and_matches_ba
     .unwrap();
 
     let mut out_buf = PixelBuf::new(w, h, PixelFormat::RGB8_SRGB).unwrap();
-    let mut out_banded = BandedBuf::new(w, h, PixelFormat::RGB8_SRGB, 8 * 1024).unwrap();
+    let mut out_banded = BandedBuf::new(
+        w,
+        h,
+        PixelFormat::RGB8_SRGB,
+        BandSizing::MaxBandBytes(8 * 1024),
+    )
+    .unwrap();
 
     // Measure allocations during execute_into (PeakSource::Measured on PQ U16):
     // MUST NOT allocate a full-image F32 intermediate (196 KiB)!
@@ -157,7 +171,7 @@ fn dual_layer_hdr_gain_map_extract_and_apply_roundtrip() {
         }
     }
 
-    let meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
+    let meta = GainMapMetadata::sdr_to_hdr_stops(2.5).unwrap();
     let dual = extract_gain_map(&sdr.as_view(), &hdr.as_view(), meta).unwrap();
 
     // At headroom = 0.0 stops -> exact SDR base luminance!
@@ -226,7 +240,8 @@ fn ycbcr_p010_and_8bit_420_to_rgb_f32() {
         }
     }
 
-    let rgb = reconstruct_planar_f32(&planar.as_view()).unwrap();
+    let rgb =
+        reconstruct_planar_f32(&planar.as_view(), &PlanarReconstructionOptions::nearest()).unwrap();
     let px = rgb.as_view().row_as::<f32>(0).unwrap();
     assert!((px[0] - 1.0).abs() < 1e-4 && (px[1] - 1.0).abs() < 1e-4 && (px[2] - 1.0).abs() < 1e-4);
     assert!(matches!(
@@ -248,7 +263,7 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
         GainMapApplier, GainMapApplyConfig, GainMapResample, apply_gain_map_with,
     };
     use zenpixels_convert::{
-        AlphaMode, BandedBuf, DualLayerHdrView, Orientation, PixelSource, SampleLayout,
+        AlphaMode, BandSizing, BandedBuf, DualLayerHdrView, Orientation, PixelSource, SampleLayout,
         convert_to_buf,
     };
 
@@ -271,7 +286,7 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -281,7 +296,7 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
             *b = ((y as usize * 31 + x * 23 + 17) % 256) as u8;
         }
     }
-    let meta = GainMapMetadata::symmetric_stops(3.0).unwrap();
+    let meta = GainMapMetadata::sdr_to_hdr_stops(3.0).unwrap();
     let dual = DualLayerHdrView::new(
         base.as_view(),
         gm.as_view(),
@@ -365,7 +380,13 @@ fn gainmap_streaming_row_cache_efficiency_zero_alloc_and_banded_parity() {
     }
 
     // 4. BandedBuf streaming via apply_into matches PixelBuf 0-bit!
-    let mut banded = BandedBuf::new(w, h, applier.destination_format().clone(), 4096).unwrap();
+    let mut banded = BandedBuf::new(
+        w,
+        h,
+        applier.destination_format().clone(),
+        BandSizing::MaxBandBytes(4096),
+    )
+    .unwrap();
     assert!(banded.bands().len() >= 4);
     applier
         .apply_into(&base, &gm_view, &mut banded, &Unstoppable)
@@ -415,7 +436,7 @@ fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
     assert_eq!(display_boost_to_headroom_stops(f32::NAN), 0.0);
     assert!((display_boost_to_headroom_stops(4.0) - 2.0).abs() < 1e-6);
 
-    let meta = GainMapMetadata::symmetric_stops(2.0).unwrap();
+    let meta = GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap();
     assert!((full_reconstruction_headroom_stops(&meta) - 2.0).abs() < 1e-6);
     assert_eq!(signed_weight(&meta, 0.0), Some(0.0));
     assert_eq!(signed_weight(&meta, 1.0), Some(0.5));
@@ -431,7 +452,7 @@ fn gainmap_resampling_unit_weights_clamping_and_adversarial_guard() {
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -569,8 +590,14 @@ fn gainmap_row_extractor_streaming_and_contract_33() {
     let base_rgba = [0.25f32, 0.25, 0.25, 0.5, 0.25, 0.25, 0.25, 1.0];
     let hdr_rgba = [0.25f32, 0.25, 0.25, 0.5, 2.0, 2.0, 2.0, 1.0];
     let mut gm_row = [0u8; 2];
-    ext.encode_row_linear_f32(&base_rgba, &hdr_rgba, 4, SampleLayout::GRAY8, &mut gm_row)
-        .unwrap();
+    ext.encode_row_linear_f32(
+        &base_rgba,
+        &hdr_rgba,
+        zenpixels_convert::gainmap::LinearInputChannels::Rgba,
+        SampleLayout::GRAY8,
+        &mut gm_row,
+    )
+    .unwrap();
 
     assert_eq!(gm_row[0], 0);
     // 3.0 / 4.0 * 255 = 191.25 -> 191
@@ -603,7 +630,13 @@ fn gainmap_row_extractor_streaming_and_contract_33() {
     let sdr_alt = [0.5f32, 0.5, 0.5]; // ratios: 1/4 (-2 stops -> +2), 1/2 (-1 -> +1), 1 (0)
     let mut rev_row = [0u8; 3];
     rev_ext
-        .encode_row_linear_f32(&hdr_base, &sdr_alt, 3, SampleLayout::RGB8, &mut rev_row)
+        .encode_row_linear_f32(
+            &hdr_base,
+            &sdr_alt,
+            zenpixels_convert::gainmap::LinearInputChannels::Rgb,
+            SampleLayout::RGB8,
+            &mut rev_row,
+        )
         .unwrap();
     assert!(
         (i32::from(rev_row[0]) - 170).abs() <= 1,
@@ -901,7 +934,7 @@ fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_r
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -915,7 +948,7 @@ fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_r
             }
         }
     }
-    let meta = GainMapMetadata::symmetric_stops(2.5).unwrap();
+    let meta = GainMapMetadata::sdr_to_hdr_stops(2.5).unwrap();
     let base_dual = DualLayerHdrBuf::new(base, gm, meta).unwrap();
 
     // 1. O(1) EXIF passthrough metadata rotate composes `then(delta)` on both owned & borrowed views.
@@ -1143,7 +1176,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );
@@ -1216,7 +1249,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     let huge_err = GainMapApplier::new(
         GainMapLayer::new(PixelFormat::RGB8_SRGB, 1, 1),
         GainMapLayer::new(gm_spec.clone(), 65_536, 1),
-        GainMapMetadata::symmetric_stops(2.0).unwrap(),
+        GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap(),
         None,
         &GainMapApplyConfig::from_headroom_stops(2.0).with_resample(GainMapResample::Bilinear),
     )
@@ -1258,7 +1291,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         ext1.encode_row_linear_f32(
             &[0.5, 0.5, 0.5],
             &[1.0, 1.0, 1.0],
-            3,
+            zenpixels_convert::gainmap::LinearInputChannels::Rgb,
             SampleLayout::GRAYF32,
             &mut buf16
         )
@@ -1269,7 +1302,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         ext1.encode_row_linear_f32(
             &[0.5, 0.5, 0.5],
             &[1.0, 1.0],
-            3,
+            zenpixels_convert::gainmap::LinearInputChannels::Rgb,
             SampleLayout::GRAY8,
             &mut buf16
         )
@@ -1280,7 +1313,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         ext1.encode_row_linear_f32(
             &[0.5, 0.5, 0.5],
             &[1.0, 1.0, 1.0],
-            3,
+            zenpixels_convert::gainmap::LinearInputChannels::Rgb,
             SampleLayout::GRAY8.with_packing(BitPacking::Lsb { bits: 0 }),
             &mut buf16
         )
@@ -1296,7 +1329,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         ext3.encode_row_linear_f32(
             &[0.5, 0.5, 0.5],
             &[1.0, 1.0, 1.0],
-            3,
+            zenpixels_convert::gainmap::LinearInputChannels::Rgb,
             SampleLayout::BGR8,
             &mut buf16
         )
@@ -1311,7 +1344,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     ext1.encode_row_linear_f32(
         &[b_tiny, b_tiny, b_tiny],
         &[a_tiny, a_tiny, a_tiny],
-        3,
+        zenpixels_convert::gainmap::LinearInputChannels::Rgb,
         SampleLayout::GRAY8,
         &mut gm_out,
     )
@@ -1336,7 +1369,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
         .encode_row_linear_f32(
             &[0.5, 0.5, 0.5],
             &[1.7, 1.7, 1.7],
-            3,
+            zenpixels_convert::gainmap::LinearInputChannels::Rgb,
             SampleLayout::GRAY8,
             &mut gm_out,
         )
@@ -1368,7 +1401,7 @@ fn gainmap_codex_p1_regressions_and_edge_cases() {
     let opaque_dual = DualLayerHdrView::new(
         opaque_base.as_view(),
         gm.as_view(),
-        GainMapMetadata::symmetric_stops(2.0).unwrap(),
+        GainMapMetadata::sdr_to_hdr_stops(2.0).unwrap(),
         None,
         Orientation::Identity,
     )

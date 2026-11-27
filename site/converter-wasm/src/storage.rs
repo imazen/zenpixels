@@ -45,7 +45,13 @@ pub(crate) fn inspect(v: &Value) -> Result<Value, String> {
         .map(|(c, &e)| {
             CodePlane::component_from_u16(
                 &words,
-                InterleavedCodeLayout::new(width * components, rows, stride, components, c),
+                InterleavedCodeLayout {
+                    width_words: width * components,
+                    height: rows,
+                    stride_words: stride,
+                    component_count: components,
+                    component_index: c,
+                },
                 e,
             )
             .unwrap()

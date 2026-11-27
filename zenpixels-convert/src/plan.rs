@@ -228,26 +228,24 @@ impl RowPlan {
             return Err(err_at(ConvertError::HdrFeatureRequired));
         }
 
-        let white_nits = if src_is_pq && !dst_is_pq {
+        let white = if src_is_pq && !dst_is_pq {
             dst.color
                 .white()
                 .or(policy.sdr_white)
                 .ok_or_else(|| err_at(ConvertError::MissingHdrAnchor))?
-                .nits()
         } else if !src_is_pq && dst_is_pq {
             src.color
                 .white()
                 .or(policy.sdr_white)
                 .ok_or_else(|| err_at(ConvertError::MissingHdrAnchor))?
-                .nits()
         } else {
             src.color
                 .white()
                 .or_else(|| dst.color.white())
                 .or(policy.sdr_white)
                 .unwrap_or(DiffuseWhite::BT2408)
-                .nits()
         };
+        let white_nits = white.nits();
 
         // Separate source and destination white anchors for HLG display OOTF so a
         // relative white rescale (`Linear(100) -> HLG(200)`) never double-scales (B16).
@@ -452,7 +450,7 @@ impl RowPlan {
                     ops.push(MicroOp::PerceptualToRgb {
                         space: *space,
                         primaries: target_p,
-                        white_nits,
+                        diffuse_white: white,
                     });
                     cur_primaries = target_p;
                 }
@@ -666,7 +664,7 @@ impl RowPlan {
                     ops.push(MicroOp::RgbToPerceptual {
                         space: *space,
                         primaries: cur_primaries,
-                        white_nits,
+                        diffuse_white: white,
                     });
                     clamped_color = false;
                 }
@@ -1120,7 +1118,7 @@ impl ImagePlan {
         if !pre.uses_cms {
             let test_peak = match peak {
                 PeakSource::Fixed(n) => Some(n),
-                _ if is_hdr_tonemap => Some(Nits::new_or_panic(1000.0)),
+                _ if is_hdr_tonemap => Some(Nits::new_positive_or_panic(1000.0)),
                 _ => None,
             };
             let _ = RowPlan::build_inner(src, dst, &probe_policy, test_peak)?;
@@ -1237,13 +1235,13 @@ impl ImagePlan {
                     let hdr = src.source_hdr();
                     if let Some(cll) = hdr.content_light_level
                         && f32::from(cll.max_content_light_level) > threshold
-                        && let Some(n) = Nits::new(f32::from(cll.max_content_light_level))
+                        && let Some(n) = Nits::new_positive(f32::from(cll.max_content_light_level))
                     {
                         return Ok(Some(n));
                     }
                     if let Some(md) = hdr.mastering
                         && md.max_luminance > threshold
-                        && let Some(n) = Nits::new(md.max_luminance)
+                        && let Some(n) = Nits::new_positive(md.max_luminance)
                     {
                         return Ok(Some(n));
                     }
@@ -1266,7 +1264,7 @@ impl ImagePlan {
                         policy.hlg_rendering,
                     )?;
                     if measured > threshold {
-                        Ok(Nits::new(measured))
+                        Ok(Nits::new_positive(measured))
                     } else {
                         Ok(None)
                     }
@@ -1286,12 +1284,12 @@ impl ImagePlan {
                 let hdr = src.source_hdr();
                 if let Some(cll) = hdr.content_light_level
                     && cll.max_content_light_level > 0
-                    && let Some(n) = Nits::new(f32::from(cll.max_content_light_level))
+                    && let Some(n) = Nits::new_positive(f32::from(cll.max_content_light_level))
                 {
                     return Ok(Some(n));
                 }
                 if let Some(md) = hdr.mastering
-                    && let Some(n) = Nits::new(md.max_luminance)
+                    && let Some(n) = Nits::new_positive(md.max_luminance)
                 {
                     return Ok(Some(n));
                 }
@@ -1308,7 +1306,8 @@ impl ImagePlan {
                 let measured =
                     crate::measure::measure_max_nits_streaming(src, white, policy.hlg_rendering)?;
                 Ok(Some(
-                    Nits::new(measured.max(policy.sdr_peak.nits())).unwrap_or(policy.sdr_peak),
+                    Nits::new_positive(measured.max(policy.sdr_peak.nits()))
+                        .unwrap_or(policy.sdr_peak),
                 ))
             }
             _ => Err(err_at(ConvertError::UnsupportedRoute)),
@@ -1372,7 +1371,8 @@ pub fn convert_into_with_peak<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
 /// Refuses dropping unproven non-opaque alpha (`ConvertError::AlphaLossForbidden`);
 /// use [`convert_to_buf`] with [`AlphaPolicy::CompositeOnto`] or [`AlphaPolicy::DiscardUnchecked`]
 /// to flatten or drop live transparency explicitly.
-pub fn to_rgb8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+#[doc(alias = "to_rgb8")]
+pub fn to_rgb8_if_opaque(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
     convert_to_buf(src, &zenpixels::formats::RGB8_SRGB, &policy)
 }
@@ -1393,7 +1393,8 @@ pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 /// Refuses dropping unproven non-opaque alpha (`ConvertError::AlphaLossForbidden`);
 /// use [`convert_to_buf`] with [`AlphaPolicy::CompositeOnto`] or [`AlphaPolicy::DiscardUnchecked`]
 /// to flatten or drop live transparency explicitly.
-pub fn to_gray8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
+#[doc(alias = "to_gray8")]
+pub fn to_gray8_if_opaque(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
     convert_to_buf(src, &zenpixels::formats::GRAY8_SRGB, &policy)
 }
@@ -1686,20 +1687,25 @@ pub(crate) fn same_color_meaning(a: &ColorSpace, b: &ColorSpace) -> bool {
         (
             ColorSpace::Icc {
                 profile: pa,
-                channels: ca,
+                color_channels: ca,
                 intent: ia,
                 ..
             },
             ColorSpace::Icc {
                 profile: pb,
-                channels: cb,
+                color_channels: cb,
                 intent: ib,
                 ..
             },
         ) => ca == cb && ia == ib && zenpixels::icc::normalized_eq(pa, pb),
-        (ColorSpace::Untagged { channels: ca, .. }, ColorSpace::Untagged { channels: cb, .. }) => {
-            ca == cb
-        }
+        (
+            ColorSpace::Untagged {
+                total_channels: ca, ..
+            },
+            ColorSpace::Untagged {
+                total_channels: cb, ..
+            },
+        ) => ca == cb,
         _ => false,
     }
 }
@@ -1787,32 +1793,36 @@ pub(crate) fn try_substitute_icc(
         ColorSpace::Cmyk { .. } => None,
         ColorSpace::Icc {
             profile,
-            channels,
+            color_channels,
             alpha,
             intent,
         } => {
             // Check ICC header color-space signature matches carrier channel count.
             let sig = zenpixels::icc::profile_color_space(profile)?;
-            if (*channels == 1 && sig != zenpixels::IccColorSpace::Gray)
-                || (*channels == 3 && sig != zenpixels::IccColorSpace::Rgb)
+            if (*color_channels == 1 && sig != zenpixels::IccColorSpace::Gray)
+                || (*color_channels == 3 && sig != zenpixels::IccColorSpace::Rgb)
             {
                 return None;
             }
             // Intent-aware lookup: refuses AbsoluteColorimetric and honors per-intent safety mask.
             // When a CMS backend is configured, require Exact (±1 u16) tolerance so approximate LUT
             // profiles use the real CMS instead of silently bypassing it.
-            let exact_only = policy.cms.is_some();
+            let tolerance = if policy.cms.is_some() {
+                zenpixels::icc::IccMatchTolerance::Exact
+            } else {
+                zenpixels::icc::IccMatchTolerance::Intent
+            };
             let id = zenpixels::icc::IccIdentification::from_icc_for_intent(
-                profile, *intent, exact_only,
+                profile, *intent, tolerance,
             )?;
-            let color = if *channels == 1 {
+            let color = if *color_channels == 1 {
                 ColorSpace::Gray {
                     transfer: id.transfer,
                     range: SignalRange::Full,
                     alpha: *alpha,
                     white: None,
                 }
-            } else if *channels == 3 {
+            } else if *color_channels == 3 {
                 ColorSpace::Rgb {
                     primaries: id.primaries,
                     transfer: id.transfer,
@@ -2378,9 +2388,9 @@ fn derive_output_facts_math(
     let float = if dst.layout.sample.is_float() && dst_is_rgb_or_gray {
         if is_f16_cast_only {
             // F32 -> F16 overflows > 65504 to +/-inf and preserves NaN/Inf; only UNIT_INTERVAL
-            // survives safely as FINITE + NON_NEGATIVE + AT_MOST_ONE (subnormals can arise in F16!).
+            // survives safely as UNIT_INTERVAL (subnormals can arise in F16!).
             if src_facts.float.is_unit_interval() {
-                FloatFacts::FINITE | FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE
+                FloatFacts::UNIT_INTERVAL
             } else {
                 FloatFacts::NONE
             }
@@ -2391,10 +2401,10 @@ fn derive_output_facts_math(
                 || src_facts.float.is_unit_interval();
             if alpha_unit {
                 if safe_no_subnormals {
-                    FloatFacts::UNIT_INTERVAL
+                    FloatFacts::NORMAL_UNIT_INTERVAL
                 } else {
-                    // Clamping guarantees [0, 1] finite, NOT absence of subnormals!
-                    FloatFacts::FINITE | FloatFacts::NON_NEGATIVE | FloatFacts::AT_MOST_ONE
+                    // Clamping guarantees [0, 1] finite, NOT absence of subnormals.
+                    FloatFacts::UNIT_INTERVAL
                 }
             } else {
                 FloatFacts::NONE

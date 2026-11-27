@@ -33,20 +33,20 @@ fn c05_no_db_synthesis_distinguishes_compact_db_only_and_intrinsically_unsupport
         SynthesizedIcc::Profile(_)
     ));
 
-    // 3. Assigned DB-only pair (BT.2020 PQ) -> NeedsCms without icc-db!
+    // 3. Assigned DB-only pair (BT.2020 PQ) -> IccDbDisabled without icc-db!
     assert_eq!(
-        SynthesizedIcc::for_cicp(Cicp::BT2100_PQ),
-        SynthesizedIcc::NeedsCms
+        SynthesizedIcc::for_cicp(Cicp::BT2100_PQ_YCBCR_FULL),
+        SynthesizedIcc::IccDbDisabled
     );
 
     // 4. Intrinsically unsupported pairs (XYZ CP=10, HLG TC=18, reserved/unassigned TC=255, CP=99)
-    //    MUST return CmsUnsupported even without icc-db (never NeedsCms)!
+    //    MUST return CmsUnsupported even without icc-db (never IccDbDisabled)!
     assert_eq!(
         SynthesizedIcc::for_cicp(Cicp::new(10, 8, 0, true)),
         SynthesizedIcc::CmsUnsupported
     );
     assert_eq!(
-        SynthesizedIcc::for_cicp(Cicp::BT2100_HLG),
+        SynthesizedIcc::for_cicp(Cicp::BT2100_HLG_YCBCR_FULL),
         SynthesizedIcc::CmsUnsupported
     );
     assert_eq!(
@@ -58,25 +58,25 @@ fn c05_no_db_synthesis_distinguishes_compact_db_only_and_intrinsically_unsupport
         SynthesizedIcc::CmsUnsupported
     );
 
-    // 5. Gray without icc-db: sRGB -> NotNeeded; assigned DB-only -> NeedsCms; reserved -> CmsUnsupported!
+    // 5. Gray without icc-db: sRGB -> NotNeeded; assigned DB-only -> IccDbDisabled; reserved -> CmsUnsupported!
     assert_eq!(
         SynthesizedIcc::for_gray_cicp(Cicp::SRGB),
         SynthesizedIcc::NotNeeded
     );
     assert_eq!(
         SynthesizedIcc::for_gray_cicp(Cicp::DISPLAY_P3),
-        SynthesizedIcc::NeedsCms
+        SynthesizedIcc::IccDbDisabled
     );
     assert_eq!(
         SynthesizedIcc::for_gray_cicp(Cicp::new(9, 16, 0, true)),
-        SynthesizedIcc::NeedsCms
+        SynthesizedIcc::IccDbDisabled
     );
     assert_eq!(
         SynthesizedIcc::for_gray_cicp(Cicp::new(1, 255, 0, true)),
         SynthesizedIcc::CmsUnsupported
     );
     assert_eq!(
-        SynthesizedIcc::for_gray_cicp(Cicp::BT2100_HLG),
+        SynthesizedIcc::for_gray_cicp(Cicp::BT2100_HLG_YCBCR_FULL),
         SynthesizedIcc::CmsUnsupported
     );
 }
@@ -87,7 +87,7 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: Arc::from(DISPLAY_P3_V4),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Straight,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -108,14 +108,14 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
     assert!(matches!(
         reduced_format.color,
         ColorSpace::Icc {
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             ..
         }
     ));
 
     let mut buf = PixelBuf::from_bytes(row.repeat(2), 2, 2, p3_rgba).unwrap();
-    compact_in_place(&mut buf, AlphaCompaction::DropUnusedLanes);
+    assert!(compact_in_place(&mut buf, AlphaCompaction::DropUnusedLanes).unwrap());
     assert_eq!(buf.format().layout, SampleLayout::RGB8);
     assert_eq!(buf.as_view().row(0), &[64, 64, 64, 128, 128, 128]);
     assert_eq!(buf.as_view().row(1), &[64, 64, 64, 128, 128, 128]);
@@ -127,9 +127,9 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
 fn c03_b05_negotiate_without_bt2446a_never_elects_unbuildable_hdr_sdr_candidate() {
     let pq = PixelFormat::RGB16_BT2100_PQ;
     let srgb8 = PixelFormat::RGB8_SRGB;
-    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0).unwrap());
+    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(203.0).unwrap());
     assert!(
-        RowPlan::build(&pq, &srgb8, &pol, Some(Nits::new(1000.0).unwrap())).is_err(),
+        RowPlan::build(&pq, &srgb8, &pol, Some(Nits::new_positive(1000.0).unwrap()),).is_err(),
         "without bt2446a or hdr-transfers, PQ->sRGB8 must fail cleanly"
     );
     assert!(

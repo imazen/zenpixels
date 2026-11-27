@@ -142,7 +142,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: Arc::clone(&adobe_icc),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Straight,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -204,7 +204,7 @@ fn safe_icc_substitution_without_cms_matches_adobe_oracle() {
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: adobe_icc,
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Straight,
             intent: RenderingIntent::AbsoluteColorimetric,
         },
@@ -235,7 +235,7 @@ fn moxcms_icc_transform_and_safe_substitution() {
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: adobe_icc,
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Straight,
             intent: RenderingIntent::RelativeColorimetric,
         },

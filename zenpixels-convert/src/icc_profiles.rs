@@ -225,7 +225,8 @@ pub enum SynthesizedIcc {
     /// synthesize export bytes here — enable the `icc-db` feature to serve the full grid.
     /// Unassigned / reserved code points, CIE XYZ RGB (`CP=10`), and HLG (`TC=18`)
     /// always return [`CmsUnsupported`](Self::CmsUnsupported) regardless of `icc-db`.
-    NeedsCms,
+    #[doc(alias = "NeedsCms")]
+    IccDbDisabled,
     /// This export path cannot supply a qualified profile for the CICP.
     /// This includes unsupported code points and HLG without a rendering target.
     /// Preserve native CICP where the container permits it; an ICC-only caller
@@ -274,7 +275,7 @@ impl SynthesizedIcc {
 /// Without `icc-db`, compact generated P3/sRGB and P3/BT.709 exports plus the
 /// curated BT.2020/BT.709 and Adobe RGB constants
 /// serve their respective combinations; other eligible pairs return
-/// [`NeedsCms`](SynthesizedIcc::NeedsCms). The constants have compatibility-adjusted
+/// [`IccDbDisabled`](SynthesizedIcc::IccDbDisabled). The constants have compatibility-adjusted
 /// colorimetry and are distinct from the generated definitions.
 ///
 /// sRGB and unspecified defaults return [`NotNeeded`](SynthesizedIcc::NotNeeded).
@@ -347,14 +348,14 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         SynthesizedIcc::CmsUnsupported
     }
     // Without the database: a curated const whose curve is exactly the
-    // requested transfer, else NeedsCms ("enable `icc-db`") for eligible assigned pairs.
+    // requested transfer, else IccDbDisabled ("enable `icc-db`") for eligible assigned pairs.
     #[cfg(not(feature = "icc-db"))]
     {
         let cp = Primaries::from_cicp(cicp.color_primaries).unwrap_or(Primaries::Unknown);
         let tf = Transfer::from_cicp(cicp.transfer_characteristics).unwrap_or(Transfer::Unknown);
         match bundled_icc_profile(cp, tf) {
             Some(bytes) => SynthesizedIcc::Profile(Cow::Borrowed(bytes)),
-            None => SynthesizedIcc::NeedsCms,
+            None => SynthesizedIcc::IccDbDisabled,
         }
     }
 }
@@ -376,7 +377,7 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 ///
 /// After HLG refusal, 164 non-default gray pairs remain eligible with `icc-db`.
 /// Primaries 10 is valid here because only its equal-energy white is needed.
-/// Without `icc-db`, eligible assigned pairs return [`NeedsCms`](SynthesizedIcc::NeedsCms);
+/// Without `icc-db`, eligible assigned pairs return [`IccDbDisabled`](SynthesizedIcc::IccDbDisabled);
 /// unassigned/reserved codes and HLG return [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported)
 /// in every build.
 pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
@@ -419,7 +420,7 @@ pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     }
     #[cfg(not(feature = "icc-db"))]
     {
-        SynthesizedIcc::NeedsCms
+        SynthesizedIcc::IccDbDisabled
     }
 }
 
@@ -731,7 +732,7 @@ mod tests {
     fn synthesize_icc_for_cicp_hdr_pq_is_bundled_in_every_build() {
         // BT.2020 PQ: an HDR transfer with no `&'static` const, but it IS in the
         // full-grid blob now — so a profile comes back in BOTH builds, never a
-        // mis-tagged SDR profile and never `NeedsCms`. (The bytes are the
+        // mis-tagged SDR profile and never `IccDbDisabled`. (The bytes are the
         // blob's; byte-equality with moxcms is verified by the roundtrip test.)
         let bt2020_pq = Cicp::new(9, 16, 9, false); // primaries 9, transfer 16 (PQ)
         match synthesize_icc_for_cicp(bt2020_pq) {
@@ -749,7 +750,7 @@ mod tests {
         // Recognized primaries (BT.2020) but a *reserved* transfer code (0). It's
         // outside the assigned H.273 grid, so it isn't in the blob — synthesis
         // must refuse rather than mis-tag. The blob is the coverage source now,
-        // so a no-CMS build reports `CmsUnsupported` (not `NeedsCms`): there is
+        // so a no-CMS build reports `CmsUnsupported` (not `IccDbDisabled`): there is
         // no CMS that could add what the blob lacks for an unassigned code.
         let bt2020_reserved_trc = Cicp::new(9, 0, 9, false);
         assert_eq!(

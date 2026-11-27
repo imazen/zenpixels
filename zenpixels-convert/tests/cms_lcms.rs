@@ -165,14 +165,14 @@ fn synthetic_rgb_lut_icc() -> Vec<u8> {
 fn icc_spec(
     layout: SampleLayout,
     profile: Arc<[u8]>,
-    channels: u8,
+    color_channels: u8,
     alpha: AlphaMode,
 ) -> PixelFormat {
     PixelFormat::new(
         layout,
         ColorSpace::Icc {
             profile,
-            channels,
+            color_channels,
             alpha,
             intent: RenderingIntent::RelativeColorimetric,
         },

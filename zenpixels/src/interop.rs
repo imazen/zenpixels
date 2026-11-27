@@ -942,8 +942,12 @@ impl PixelBuf {
         Self::from_samples(img.into_raw(), w, h, PixelFormat::new(layout, color))
     }
 
-    /// Adopt an `image::DynamicImage` **zero-copy** across all 10 standard variants, preserving
-    /// its declared CICP color space.
+    /// Adopt an `image::DynamicImage` **zero-copy** across all 10 standard variants, reading
+    /// its declared `image::metadata::Cicp` color space.
+    ///
+    /// Note: `image` 0.25 defaults `DynamicImage::color_space()` to `Cicp::SRGB` even for
+    /// `ImageRgb32F`/`ImageRgba32F`. Use [`from_dynamic_image_with_color`](Self::from_dynamic_image_with_color)
+    /// when adopting untagged linear float `DynamicImage` buffers whose CICP was left default.
     pub fn from_dynamic_image(img: image::DynamicImage) -> Result<Self, At<BufferError>> {
         match img {
             image::DynamicImage::ImageLuma8(b) => Self::from_image_buffer(b),
@@ -956,6 +960,28 @@ impl PixelBuf {
             image::DynamicImage::ImageRgba16(b) => Self::from_image_buffer(b),
             image::DynamicImage::ImageRgb32F(b) => Self::from_image_buffer(b),
             image::DynamicImage::ImageRgba32F(b) => Self::from_image_buffer(b),
+            _ => Err(err_at(BufferError::InteropUnsupported)),
+        }
+    }
+
+    /// Adopt an `image::DynamicImage` **zero-copy** across all 10 standard variants with an
+    /// explicit `color` (e.g. `ColorSpace::LINEAR_SRGB` for `ImageRgb32F`), rejecting
+    /// contradictory non-default CICP declarations.
+    pub fn from_dynamic_image_with_color(
+        img: image::DynamicImage,
+        color: ColorSpace,
+    ) -> Result<Self, At<BufferError>> {
+        match img {
+            image::DynamicImage::ImageLuma8(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageLumaA8(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageRgb8(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageRgba8(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageLuma16(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageLumaA16(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageRgb16(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageRgba16(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageRgb32F(b) => Self::from_image_buffer_with_color(b, color),
+            image::DynamicImage::ImageRgba32F(b) => Self::from_image_buffer_with_color(b, color),
             _ => Err(err_at(BufferError::InteropUnsupported)),
         }
     }
@@ -1034,9 +1060,12 @@ impl PixelBuf {
         }
     }
 
-    /// Helper: construct an sRGB `ColorSpace` matching `image`'s default convention.
+    /// Helper: construct an sRGB `ColorSpace` matching `image` 0.25's default `Cicp::SRGB` convention.
+    ///
+    /// Note: [`from_image_buffer`](Self::from_image_buffer) and [`from_dynamic_image`](Self::from_dynamic_image)
+    /// read each buffer's declared `image::metadata::Cicp` rather than calling this helper.
     #[must_use]
-    pub const fn image_default_color(order: ChannelOrder) -> ColorSpace {
+    pub const fn image_srgb_default_color(order: ChannelOrder) -> ColorSpace {
         match order {
             ChannelOrder::Gray => ColorSpace::GRAY_SRGB,
             ChannelOrder::GrayAlpha => ColorSpace::Gray {

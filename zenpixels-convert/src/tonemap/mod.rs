@@ -18,7 +18,7 @@ pub const BT2020_LG: f32 = 0.6780;
 pub const BT2020_LB: f32 = 0.0593;
 
 #[cfg(feature = "bt2446a")]
-pub use bt2446a::Bt2446A;
+pub use bt2446a::{Bt2446A, Bt2446APipelineManaged};
 #[cfg(feature = "oklab")]
 pub use gamut_compress::SoftCompress;
 pub use tone_mapper::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};

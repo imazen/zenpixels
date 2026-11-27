@@ -13,10 +13,10 @@
 use alloc::sync::Arc;
 use zenpixels::icc::{IccIdentification, IdentificationUse};
 use zenpixels::{
-    AlphaMode, BandedBuf, ChannelOrder, ColorOrigin, ColorSpace, DiffuseWhite, FloatFacts,
-    Orientation, PeakSource, PixelBuf, PixelCow, PixelFormat, PlanarBuf, PlaneBuf, PlaneFormat,
-    PlaneRole, Primaries, RenderingIntent, SampleFacts, SampleLayout, SampleType, SignalRange,
-    Transfer,
+    AlphaMode, BandSizing, BandedBuf, ChannelOrder, ColorOrigin, ColorSpace, DiffuseWhite,
+    FloatFacts, Orientation, PeakSource, PixelBuf, PixelCow, PixelFormat, PlanarBuf, PlaneBuf,
+    PlaneFormat, PlaneRole, Primaries, RenderingIntent, SampleFacts, SampleLayout, SampleType,
+    SignalRange, Transfer,
 };
 use zenpixels_convert::{
     Accelerators, ConvertError, ConvertPolicy, DepthPolicy, LightLevelHistogram, LightLevelMethod,
@@ -24,7 +24,7 @@ use zenpixels_convert::{
     PlanarReconstructionOptions, RowPlan, YcbcrMatrix, adapt_for_encode, apply_orientation,
     apply_orientation_banded, apply_orientation_banded_into, measure_content_light_level,
     measure_histogram, measure_max_smoothed, reconstruct_planar_f32, reconstruct_planar_to_buf,
-    to_bgra8, to_gray8, to_rgb8, to_rgba8,
+    to_bgra8, to_gray8_if_opaque, to_rgb8_if_opaque, to_rgba8,
 };
 
 extern crate alloc;
@@ -314,7 +314,7 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
         SampleLayout::GRAY8,
         ColorSpace::Icc {
             profile: Arc::from(c_white_icc.as_slice()),
-            channels: 1,
+            color_channels: 1,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -335,8 +335,10 @@ fn g04_output_plan_rejects_metadata_only_icc_for_structured_dst() {
 fn g14_negotiate_scene_linear_hdr_precheck() {
     let lin_src = PixelFormat::RGBF32_LINEAR;
     let sdr_dst = PixelFormat::RGB8_SRGB;
-    let pol_tm =
-        ConvertPolicy::display_sdr(DiffuseWhite::BT2408, zenpixels::Nits::new(100.0).unwrap());
+    let pol_tm = ConvertPolicy::display_sdr(
+        DiffuseWhite::BT2408,
+        zenpixels::Nits::new_positive(100.0).unwrap(),
+    );
 
     #[cfg(not(feature = "bt2446a"))]
     {
@@ -397,7 +399,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(with_d2b1.as_slice()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -406,7 +408,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(with_d2b1.as_slice()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -429,7 +431,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(with_b2d0.as_slice()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -452,7 +454,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: Arc::from(unequal_bytes.as_slice()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -478,7 +480,7 @@ fn g02_moxcms_float_mpe_and_unequal_trc_refusal_and_extended_f32() {
         SampleLayout::RGBF32,
         ColorSpace::Icc {
             profile: Arc::from(lin_p3_bytes.as_slice()),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -532,7 +534,9 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
         }
         // Force uneven source bands (~7 rows/band -> 5 bands for h=29).
         let src_band_bytes = (w as usize) * bpp * 7;
-        let banded_src = BandedBuf::from_view(&contig.as_view(), src_band_bytes).unwrap();
+        let banded_src =
+            BandedBuf::from_view(&contig.as_view(), BandSizing::MaxBandBytes(src_band_bytes))
+                .unwrap();
         assert!(banded_src.band_count() >= 4);
 
         for orient in orientations {
@@ -540,7 +544,12 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
             // Use a DIFFERENT destination band height (~5 rows/band) to stress band seams!
             let (ow, oh) = orient.output_dimensions(w, h);
             let dst_band_bytes = (ow as usize) * bpp * 5;
-            let got = apply_orientation_banded(&banded_src, orient, dst_band_bytes).unwrap();
+            let got = apply_orientation_banded(
+                &banded_src,
+                orient,
+                BandSizing::MaxBandBytes(dst_band_bytes),
+            )
+            .unwrap();
             assert_eq!(got.width(), ow);
             assert_eq!(got.height(), oh);
             let got_contig = got.into_buf().unwrap();
@@ -553,8 +562,13 @@ fn t2_3_banded_orientation_matches_contiguous_bit_exact_all_8_orientations() {
             );
 
             // Also verify zero-alloc `apply_orientation_banded_into` with 3-row dst bands.
-            let mut dst_pre =
-                BandedBuf::new(ow, oh, spec.clone(), (ow as usize) * bpp * 3).unwrap();
+            let mut dst_pre = BandedBuf::new(
+                ow,
+                oh,
+                spec.clone(),
+                BandSizing::MaxBandBytes((ow as usize) * bpp * 3),
+            )
+            .unwrap();
             apply_orientation_banded_into(&banded_src, orient, &mut dst_pre).unwrap();
             assert_eq!(
                 dst_pre
@@ -654,27 +668,27 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     assert_eq!(neg.format, PixelFormat::RGBA8_SRGB);
     assert!(matches!(ready.pixels, PixelCow::Borrowed(_)));
 
-    // 2. to_rgb8 / to_rgba8 / to_gray8 / to_bgra8 convenience wrappers.
+    // 2. to_rgb8_if_opaque / to_rgba8 / to_gray8_if_opaque / to_bgra8 convenience wrappers.
     // Unproven straight-alpha RGBA8 is refused by alpha-dropping helpers (DiscardIfOpaque):
     assert_eq!(
-        *to_rgb8(&buf.as_view()).unwrap_err().error(),
+        *to_rgb8_if_opaque(&buf.as_view()).unwrap_err().error(),
         ConvertError::AlphaLossForbidden
     );
     assert_eq!(
-        *to_gray8(&buf.as_view()).unwrap_err().error(),
+        *to_gray8_if_opaque(&buf.as_view()).unwrap_err().error(),
         ConvertError::AlphaLossForbidden
     );
     let ra = to_rgba8(&buf.as_view()).unwrap();
     assert_eq!(ra.as_view().row(0), &[10, 20, 30, 255]);
     let bg = to_bgra8(&buf.as_view()).unwrap();
     assert_eq!(bg.as_view().row(0), &[30, 20, 10, 255]);
-    // Once opacity is proven (scan_facts or into_opaque_verified), to_rgb8 and to_gray8 succeed:
+    // Once opacity is proven (scan_facts or into_opaque_verified), to_rgb8_if_opaque and to_gray8_if_opaque succeed:
     let mut proven_buf = buf.clone();
     let facts = zenpixels_convert::scan_facts(&proven_buf.as_view());
     proven_buf.assume_facts(facts);
-    let r = to_rgb8(&proven_buf.as_view()).unwrap();
+    let r = to_rgb8_if_opaque(&proven_buf.as_view()).unwrap();
     assert_eq!(r.as_view().row(0), &[10, 20, 30]);
-    let gr = to_gray8(&proven_buf.as_view()).unwrap();
+    let gr = to_gray8_if_opaque(&proven_buf.as_view()).unwrap();
     assert_eq!(
         gr.as_view().row(0),
         &[((10u16 * 54 + 20 * 183 + 30 * 19 + 128) >> 8) as u8]
@@ -718,9 +732,12 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
     let untagged_planar = PlanarBuf::from_planes(2, 2, vec![y_p, cb_p, cr_p]).unwrap();
     // Missing color/range/matrix metadata must refuse rather than guess!
     assert_eq!(
-        *reconstruct_planar_f32(&untagged_planar.as_view())
-            .unwrap_err()
-            .error(),
+        *reconstruct_planar_f32(
+            &untagged_planar.as_view(),
+            &PlanarReconstructionOptions::nearest()
+        )
+        .unwrap_err()
+        .error(),
         ConvertError::UnsupportedRoute
     );
 
@@ -733,7 +750,8 @@ fn t2_4_t2_5_adapt_for_encode_convenience_helpers_and_ycbcr_from_planar() {
             white: None,
         })
         .with_matrix_coefficients(zenpixels_convert::MatrixCoefficients::BT709);
-    let from_meta = reconstruct_planar_f32(&tagged.as_view()).unwrap();
+    let from_meta =
+        reconstruct_planar_f32(&tagged.as_view(), &PlanarReconstructionOptions::nearest()).unwrap();
     let via_to_buf = reconstruct_planar_to_buf(
         &tagged.as_view(),
         SampleLayout::RGBF32,

@@ -246,7 +246,7 @@ impl BitPacking {
     /// Extract the unsigned integer code for `component` from a `u32`-widened word.
     #[inline]
     #[must_use]
-    pub const fn extract_code(self, sample: SampleType, word: u32, component: usize) -> u32 {
+    pub const fn extract_code(self, sample: SampleType, component: usize, word: u32) -> u32 {
         match self {
             Self::Full => word,
             Self::Lsb { bits } => {
@@ -884,19 +884,16 @@ impl PlaneFormat {
         (frame_width.div_ceil(hx), frame_height.div_ceil(vy))
     }
 
-    /// Compute this plane's `(width, height)` in elements for a cropped luma frame of
-    /// `(frame_width, frame_height)` starting at luma-grid origin `crop_origin = (origin_x, origin_y)`.
+    /// Compute this plane's `(width, height)` in elements for a cropped luma rectangle
+    /// `crop` (`PixelRect { x, y, width, height }`) within its parent full-resolution luma frame.
     ///
     /// Preserves chroma phase at odd crop origins: a `2×2` subsampled plane for a crop
-    /// `[origin_x .. origin_x + frame_width)` covers chroma columns `[origin_x / hx .. ceil((origin_x + frame_width) / hx))`.
+    /// `[crop.x .. crop.x + crop.width)` covers chroma columns
+    /// `[crop.x / hx .. ceil((crop.x + crop.width) / hx))`.
+    /// Returns `None` only if `crop.x + crop.width` or `crop.y + crop.height` overflows `u32`.
     #[inline]
     #[must_use]
-    pub const fn cropped_plane_dimensions(
-        self,
-        frame_width: u32,
-        frame_height: u32,
-        crop_origin: (u32, u32),
-    ) -> Option<(u32, u32)> {
+    pub const fn cropped_plane_dimensions(self, crop: PixelRect) -> Option<(u32, u32)> {
         let hx = if self.subsampling.0 == 0 {
             1
         } else {
@@ -907,14 +904,14 @@ impl PlaneFormat {
         } else {
             self.subsampling.1 as u32
         };
-        let Some(end_x) = crop_origin.0.checked_add(frame_width) else {
+        let Some(end_x) = crop.x.checked_add(crop.width) else {
             return None;
         };
-        let Some(end_y) = crop_origin.1.checked_add(frame_height) else {
+        let Some(end_y) = crop.y.checked_add(crop.height) else {
             return None;
         };
-        let pw = end_x.div_ceil(hx) - (crop_origin.0 / hx);
-        let ph = end_y.div_ceil(vy) - (crop_origin.1 / vy);
+        let pw = end_x.div_ceil(hx) - (crop.x / hx);
+        let ph = end_y.div_ceil(vy) - (crop.y / vy);
         Some((pw, ph))
     }
 

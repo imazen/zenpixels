@@ -320,7 +320,12 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
     // HLG BT.2100-3 display rendering (with non-zero black lift Lb = 0.05!)
     #[cfg(feature = "hdr-transfers")]
     {
-        let hlg_lift = HlgRendering::new(Nits::new(1000.0).unwrap(), 0.05, 1.2).unwrap();
+        let hlg_lift = HlgRendering::new(zenpixels_convert::HlgRenderingParams {
+            peak: Nits::new_positive(1000.0).unwrap(),
+            black_nits: 0.05,
+            system_gamma: 1.2,
+        })
+        .unwrap();
         let hlg_spec = PixelFormat::new(
             SampleLayout::RGB16,
             ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_lift))),
@@ -345,11 +350,11 @@ fn parity_hlg_pq_narrow_matte_and_bitpacking() {
             "PQ16->sRGB8(BT2446A)",
             PixelFormat::RGB16_BT2100_PQ,
             PixelFormat::RGB8_SRGB,
-            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap()),
+            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap()),
             rgb16_bytes,
             width,
             0,
-            Some(Nits::new(1000.0).unwrap()),
+            Some(Nits::new_positive(1000.0).unwrap()),
         );
     }
 
@@ -821,7 +826,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
             PixelFormat::new(
                 SampleLayout::RGB8,
                 ColorSpace::Untagged {
-                    channels: 3,
+                    total_channels: 3,
                     alpha: AlphaMode::None,
                 },
             )
@@ -829,7 +834,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
             PixelFormat::new(
                 SampleLayout::GRAY8,
                 ColorSpace::Untagged {
-                    channels: 1,
+                    total_channels: 1,
                     alpha: AlphaMode::None,
                 },
             )
@@ -848,7 +853,7 @@ fn parity_gainmap_applier_all_modes_zero_bit() {
         let spec = PixelFormat::new(
             SampleLayout::GRAY16,
             ColorSpace::Untagged {
-                channels: 1,
+                total_channels: 1,
                 alpha: AlphaMode::None,
             },
         );

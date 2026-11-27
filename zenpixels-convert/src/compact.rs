@@ -200,7 +200,7 @@ fn plan_chroma_collapse(spec: &PixelFormat) -> GraySignalPlan {
     match &spec.color {
         ColorSpace::Icc {
             profile,
-            channels: 3,
+            color_channels: 3,
             ..
         } => plan_chroma_collapse_for_icc(profile),
         ColorSpace::Rgb { primaries, .. } => {
@@ -225,7 +225,7 @@ fn apply_icc_chroma_collapse(
         return base;
     }
     let ColorSpace::Icc {
-        channels: 3,
+        color_channels: 3,
         alpha,
         intent,
         ..
@@ -246,7 +246,7 @@ fn apply_icc_chroma_collapse(
     let next_color = match gray_icc {
         Some(bytes) => ColorSpace::Icc {
             profile: Arc::clone(bytes),
-            channels: 1,
+            color_channels: 1,
             alpha: next_alpha,
             intent,
         },
@@ -461,17 +461,26 @@ pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<Conve
     ))
 }
 
-/// Analyze and compact `buf` **in place** without reallocating its backing pixel buffer.
+/// Analyze and compact `buf` **in place** without reallocating owned mutable storage
+/// (copy-on-write promotes immutable external storage, propagating allocation errors instead
+/// of swallowing them).
 ///
-/// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction run whenever justified; `alpha`
-/// controls whether redundant alpha/padding lanes are retagged in metadata
+/// Depth (`U16 → U8`) and chroma (`RGB → Gray`) compaction run whenever justified;
+/// `alpha_strategy` controls whether redundant alpha/padding lanes are retagged in metadata
 /// ([`AlphaCompaction::RetagOpaque`]) or physically dropped in place
 /// ([`AlphaCompaction::DropUnusedLanes`]).
+///
+/// Returns `Ok(true)` if any metadata or layout compaction occurred, `Ok(false)` if `buf`
+/// was already minimal, or `Err(ConvertError::Buffer(_))` on CoW allocation failure.
 #[doc(alias = "load_bearing")]
 #[doc(alias = "shrink")]
-pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
-    let drop_alpha_lanes = alpha == AlphaCompaction::DropUnusedLanes;
-    let _ = buf.transform_in_place(|bytes, input| {
+pub fn compact_in_place(
+    buf: &mut PixelBuf,
+    alpha_strategy: AlphaCompaction,
+) -> Result<bool, At<ConvertError>> {
+    let drop_alpha_lanes = alpha_strategy == AlphaCompaction::DropUnusedLanes;
+    let mut compacted = false;
+    buf.transform_in_place(|bytes, input| {
         let width = input.width;
         let rows = input.height;
         let in_stride = input.stride_bytes;
@@ -518,6 +527,7 @@ pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
                 facts.all_opaque = true;
                 facts.binary_alpha = true;
             }
+            compacted = true;
             return Some(InPlaceTransformOutput {
                 stride_bytes: in_stride,
                 format: retagged,
@@ -547,13 +557,16 @@ pub fn compact_in_place(buf: &mut PixelBuf, alpha: AlphaCompaction) {
             narrow16,
         );
 
+        compacted = true;
         Some(InPlaceTransformOutput {
             stride_bytes: out_stride,
             format: target,
             origin: orig.clone(),
             facts: SampleFacts::NONE,
         })
-    });
+    })
+    .map_err(|e| err_at((*e.error()).into()))?;
+    Ok(compacted)
 }
 
 // ── Row helpers & byte-exact compaction kernels ────────────────────────

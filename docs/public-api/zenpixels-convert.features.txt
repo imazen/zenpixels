@@ -10,55 +10,49 @@
 ## summary
 #
 #   pub modules                                 2
-#   pub types (struct/enum/trait/alias)         9
+#   pub types (struct/enum/trait/alias)        12
+#   pub consts/statics                          9
 #   free functions                              4
-#   inherent methods                           21
-#   trait roster entries (type × trait)        19
-#   auto-trait-complete types                   4
+#   inherent methods                            9
+#   trait roster entries (type × trait)        26
+#   auto-trait-complete types                   5
 #
 # per-module pub lines:
-#   (root)                            5
+#   (root)                           15
 #   cms                               3
 #   perceptual                        4
-#   tonemap                          24
+#   tonemap                          14
 
-## items (31 lines)
+## items (23 lines)
 
 pub mod perceptual
-pub fn perceptual::cartesian_to_polar([f32; 3]) -> [f32; 3]
-pub fn perceptual::linear_rgb_to_perceptual([f32; 3], zenpixels::color::Primaries, zenpixels::color::PerceptualSpace, f32) -> [f32; 3]
-pub fn perceptual::perceptual_to_linear_rgb([f32; 3], zenpixels::color::Primaries, zenpixels::color::PerceptualSpace, f32) -> [f32; 3]
-pub fn perceptual::polar_to_cartesian([f32; 3]) -> [f32; 3]
+pub fn perceptual::cartesian_to_polar_deg([f32; 3]) -> [f32; 3]
+pub fn perceptual::linear_rgb_to_perceptual([f32; 3], zenpixels::color::Primaries, zenpixels::color::PerceptualSpace, zenpixels::hdr::DiffuseWhite) -> [f32; 3]
+pub fn perceptual::perceptual_to_linear_rgb([f32; 3], zenpixels::color::Primaries, zenpixels::color::PerceptualSpace, zenpixels::hdr::DiffuseWhite) -> [f32; 3]
+pub fn perceptual::polar_deg_to_cartesian([f32; 3]) -> [f32; 3]
 pub mod tonemap::bt2446a
-pub fn tonemap::bt2446a::Bt2446A::map_rgb(&self, [f32; 3]) -> [f32; 3]
-pub fn tonemap::bt2446a::Bt2446A::map_strip_simd(&self, &mut [[f32; 3]])
-pub fn tonemap::bt2446a::Bt2446A::peaks_baked(&self) -> bool
-pub fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> Self
-pub fn tonemap::bt2446a::Bt2446A::source_peak_nits(&self) -> f32
-pub fn tonemap::bt2446a::Bt2446A::target_peak_nits(&self) -> f32
+pub fn tonemap::bt2446a::Bt2446A::map_rgb_bt2020_peak_normalized(&self, [f32; 3]) -> [f32; 3]
+pub fn tonemap::bt2446a::Bt2446A::map_strip_bt2020_peak_normalized(&self, &mut [[f32; 3]])
+pub const fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> tonemap::bt2446a::Bt2446APipelineManaged [also: (root)]
+pub const fn tonemap::bt2446a::Bt2446A::source_peak(&self) -> zenpixels::hdr::Nits [also: (root)]
+pub const fn tonemap::bt2446a::Bt2446A::target_peak(&self) -> zenpixels::hdr::Nits [also: (root)]
 pub fn tonemap::bt2446a::Bt2446A::with_peaks(zenpixels::hdr::Nits, zenpixels::hdr::Nits) -> Self
-pub fn tonemap::bt2446a::Bt2446A::map_rgb(&self, [f32; 3]) -> [f32; 3]
-pub fn tonemap::bt2446a::Bt2446A::map_strip_simd(&self, &mut [[f32; 3]])
-pub fn tonemap::bt2446a::Bt2446A::peaks_baked(&self) -> bool
-pub fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> Self
-pub fn tonemap::bt2446a::Bt2446A::source_peak_nits(&self) -> f32
-pub fn tonemap::bt2446a::Bt2446A::target_peak_nits(&self) -> f32
+pub fn tonemap::bt2446a::Bt2446A::map_rgb_bt2020_peak_normalized(&self, [f32; 3]) -> [f32; 3]
+pub fn tonemap::bt2446a::Bt2446A::map_strip_bt2020_peak_normalized(&self, &mut [[f32; 3]])
 pub fn tonemap::bt2446a::Bt2446A::with_peaks(zenpixels::hdr::Nits, zenpixels::hdr::Nits) -> Self
 pub struct Bt2446A [also: tonemap, tonemap::bt2446a]
-pub fn tonemap::bt2446a::Bt2446A::map_rgb(&self, [f32; 3]) -> [f32; 3]
-pub fn tonemap::bt2446a::Bt2446A::map_strip_simd(&self, &mut [[f32; 3]])
-pub fn tonemap::bt2446a::Bt2446A::peaks_baked(&self) -> bool
-pub fn tonemap::bt2446a::Bt2446A::pipeline_managed() -> Self
-pub fn tonemap::bt2446a::Bt2446A::source_peak_nits(&self) -> f32
-pub fn tonemap::bt2446a::Bt2446A::target_peak_nits(&self) -> f32
+pub fn tonemap::bt2446a::Bt2446A::map_rgb_bt2020_peak_normalized(&self, [f32; 3]) -> [f32; 3]
+pub fn tonemap::bt2446a::Bt2446A::map_strip_bt2020_peak_normalized(&self, &mut [[f32; 3]])
 pub fn tonemap::bt2446a::Bt2446A::with_peaks(zenpixels::hdr::Nits, zenpixels::hdr::Nits) -> Self
+pub struct Bt2446APipelineManaged [also: tonemap, tonemap::bt2446a]
 pub struct Lcms [also: cms]
 pub struct LcmsUnoptimized [also: cms]
 pub struct MoxCms [also: cms]
 
-## trait impls (4 types)
+## trait impls (5 types)
 
 Lcms: Clone, Copy, Debug, Default, cms::CmsBackend
 LcmsUnoptimized: Clone, Copy, Debug, Default, cms::CmsBackend
 MoxCms: Clone, Copy, Debug, Default, cms::CmsBackend
 tonemap::bt2446a::Bt2446A: Clone, Copy, Debug, tonemap::tone_mapper::ToneMapper
+tonemap::bt2446a::Bt2446APipelineManaged: Clone, Copy, Debug, Default, Eq, PartialEq, tonemap::tone_mapper::ToneMapper

@@ -10,8 +10,8 @@
 //!
 //! ## Which Entry Point Should I Use?
 //!
-//! - **Quick 8-bit sRGB:** [`to_rgb8`], [`to_gray8`] (both refuse unproven alpha
-//!   discard via [`AlphaPolicy::DiscardIfOpaque`]), [`to_rgba8`], [`to_bgra8`].
+//! - **Quick 8-bit sRGB:** [`to_rgb8_if_opaque`], [`to_gray8_if_opaque`] (both refuse
+//!   unproven alpha discard via [`AlphaPolicy::DiscardIfOpaque`]), [`to_rgba8`], [`to_bgra8`].
 //! - **One-shot image conversion:** [`convert_to_buf`] or [`convert_into`] (defaults to
 //!   [`PeakSource::Measured`] only when HDR tone mapping needs a peak; use
 //!   [`convert_to_buf_with_peak`] / [`convert_into_with_peak`] for explicit [`PeakSource`]).
@@ -126,7 +126,7 @@ pub use output::{
 };
 pub use plan::{
     ImagePlan, RowPlan, convert_into, convert_into_with_peak, convert_to_buf,
-    convert_to_buf_with_peak, to_bgra8, to_gray8, to_rgb8, to_rgba8,
+    convert_to_buf_with_peak, to_bgra8, to_gray8_if_opaque, to_rgb8_if_opaque, to_rgba8,
 };
 pub use planar::{
     ChromaUpsample, PlanarReconstructionOptions, reconstruct_planar_f32, reconstruct_planar_into,
@@ -136,9 +136,9 @@ pub use policy::{
     AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaCoefficients, LumaDomain, RangePolicy,
 };
 pub use scan::scan_facts;
-#[cfg(feature = "bt2446a")]
-pub use tonemap::Bt2446A;
 #[cfg(feature = "oklab")]
 pub use tonemap::SoftCompress;
+#[cfg(feature = "bt2446a")]
+pub use tonemap::{Bt2446A, Bt2446APipelineManaged};
 pub use tonemap::{PreparedMapper, Requirements, StripMapper, ToneMapContext, ToneMapper};
 pub use ycbcr::YcbcrMatrix;

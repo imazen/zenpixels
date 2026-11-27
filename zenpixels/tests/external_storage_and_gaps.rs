@@ -9,10 +9,10 @@ use zenpixels::BitPacking;
 #[cfg(any(feature = "imgref", feature = "hash"))]
 use zenpixels::RowAlign;
 use zenpixels::{
-    AlphaMode, BandRowLocation, BandedBuf, BufferError, ByteStorage, ByteStorageMut, ChannelOrder,
-    ChromaSiting, CodePlaneError, CodePlaneMut, ColorSpace, PixelBuf, PixelFormat, PixelRect,
-    PixelSink, PlanarBuf, PlanarViewMut, PlaneBuf, PlaneFormat, PlaneRole, PlaneViewMut, Primaries,
-    SampleEncoding, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
+    AlphaMode, BandRowLocation, BandSizing, BandedBuf, BufferError, ByteStorage, ByteStorageMut,
+    ChannelOrder, ChromaSiting, CodePlaneError, CodePlaneMut, ColorSpace, PixelBuf, PixelFormat,
+    PixelRect, PixelSink, PlanarBuf, PlanarViewMut, PlaneBuf, PlaneFormat, PlaneRole, PlaneViewMut,
+    Primaries, SampleEncoding, SampleFacts, SampleLayout, SampleType, SignalRange, Transfer,
 };
 #[cfg(any(feature = "imgref", feature = "image"))]
 use zenpixels::{PixelView, PixelViewMut};
@@ -64,8 +64,8 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     assert_eq!(buf.external_ref::<ReadOnlyPoolHandle>().unwrap().id, 42);
     assert!(buf.external_ref::<Arc<[u8]>>().is_none());
 
-    // Already-tight external buffer stays external zero-copy through `into_tight_buf`.
-    let buf = buf.into_tight_buf().unwrap();
+    // Already-tight external buffer stays external zero-copy through `into_tight_rows`.
+    let buf = buf.into_tight_rows().unwrap();
     assert!(buf.is_external());
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
 
@@ -88,7 +88,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     let mut arc_buf = PixelBuf::from_external(Arc::clone(&raw), 4, 3, 12, spec.clone()).unwrap();
     assert_eq!(arc_buf.as_view().as_strided_bytes().as_ptr(), ptr);
     {
-        let mut vm = arc_buf.try_as_view_mut().unwrap();
+        let mut vm = arc_buf.try_make_view_mut().unwrap();
         vm.row_mut(1)[2] = 99;
     }
     assert!(!arc_buf.is_external());
@@ -161,7 +161,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
 
     // In-place write via `as_view_mut` AND `PixelSink` writes directly into the pool lease!
     {
-        let mut vm = buf.try_as_view_mut().unwrap();
+        let mut vm = buf.try_make_view_mut().unwrap();
         assert_eq!(vm.as_strided_bytes_mut().as_ptr(), ptr);
         vm.row_mut(0)[0..4].copy_from_slice(&[10, 20, 30, 255]);
     }
@@ -225,7 +225,7 @@ fn external_owned_plane_and_try_from_parts_recover() {
         PlaneFormat::new(PlaneRole::Cb, SampleType::U16),
     )
     .unwrap();
-    uv_plane.try_as_view_mut().unwrap().row_mut(0)[0..2].copy_from_slice(&1023u16.to_ne_bytes());
+    uv_plane.try_make_view_mut().unwrap().row_mut(0)[0..2].copy_from_slice(&1023u16.to_ne_bytes());
     let uv_back = uv_plane.into_external_mut::<Box<[u16]>>().unwrap();
     assert_eq!(uv_back[0], 1023);
 
@@ -263,8 +263,14 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
     assert_eq!(buf.as_view().row(0), &[30, 20, 10, 255, 60, 50, 40, 255]);
     assert!(buf.facts().all_opaque);
 
-    // Opaque BGRA -> RGB compacts in place without reallocating!
-    buf.swizzle_in_place(ChannelOrder::Rgb).unwrap();
+    // `swizzle_in_place` only handles equal-width channel swaps (refuses 4->3).
+    assert_eq!(
+        *buf.swizzle_in_place(ChannelOrder::Rgb).unwrap_err().error(),
+        BufferError::IncompatibleLayout
+    );
+
+    // Opaque BGRA -> RGB compacts in place without reallocating via `drop_unused_lane_in_place`!
+    buf.drop_unused_lane_in_place(ChannelOrder::Rgb).unwrap();
     assert_eq!(buf.format().layout.order, ChannelOrder::Rgb);
     assert_eq!(buf.format().color.alpha(), AlphaMode::None);
     assert_eq!(buf.as_view().as_strided_bytes().as_ptr(), ptr);
@@ -274,7 +280,7 @@ fn swizzle_in_place_rgb_bgr_and_drop_padding_zero_realloc() {
     let mut straight = PixelBuf::new(2, 1, PixelFormat::RGBA8_SRGB).unwrap();
     assert_eq!(
         *straight
-            .swizzle_in_place(ChannelOrder::Rgb)
+            .drop_unused_lane_in_place(ChannelOrder::Rgb)
             .unwrap_err()
             .error(),
         BufferError::IncompatibleLayout
@@ -311,7 +317,8 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
             }
         }
     }
-    let banded = BandedBuf::from_buf(src.try_clone().unwrap(), 30).unwrap();
+    let banded =
+        BandedBuf::from_buf(src.try_clone().unwrap(), BandSizing::MaxBandBytes(30)).unwrap();
     assert_eq!(banded.rows_per_band(), 2);
     assert_eq!(banded.band_count(), 4);
     assert_eq!(
@@ -331,7 +338,7 @@ fn banded_buf_helpers_and_planar_color_and_mut_views() {
 
     // Single-band zero-copy round-trip.
     let ptr = src.as_view().as_strided_bytes().as_ptr();
-    let single = BandedBuf::from_buf(src, 1024 * 1024).unwrap();
+    let single = BandedBuf::from_buf(src, BandSizing::MaxBandBytes(1024 * 1024)).unwrap();
     assert_eq!(single.band_count(), 1);
     assert_eq!(
         single.band_view(0).unwrap().as_strided_bytes().as_ptr(),
@@ -546,7 +553,7 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
             }
         }
     }
-    let h_tight = tight.hash_with(HashInclusions::All);
+    let h_tight = tight.hash_with(HashInclusions::PixelsColorAndFacts);
 
     // 64-byte aligned padded stride hashes IDENTICALLY.
     let mut padded =
@@ -557,17 +564,23 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
             .row_mut(y)
             .copy_from_slice(tight.as_view().row(y));
     }
-    assert_eq!(padded.hash_with(HashInclusions::All), h_tight);
+    assert_eq!(
+        padded.hash_with(HashInclusions::PixelsColorAndFacts),
+        h_tight
+    );
 
     // External storage hashes IDENTICALLY.
     let ext_arc: Arc<[u8]> = Arc::from(tight.as_view().as_contiguous_bytes().unwrap());
     let ext = PixelBuf::from_external(ext_arc, 5, 4, 15, PixelFormat::RGB8_SRGB).unwrap();
-    assert_eq!(ext.hash_with(HashInclusions::All), h_tight);
+    assert_eq!(ext.hash_with(HashInclusions::PixelsColorAndFacts), h_tight);
 
     // BandedBuf hashes IDENTICALLY across band sizes!
-    let banded = BandedBuf::from_view(&tight.as_view(), 15).unwrap();
+    let banded = BandedBuf::from_view(&tight.as_view(), BandSizing::MaxBandBytes(15)).unwrap();
     assert_eq!(banded.band_count(), 4);
-    assert_eq!(banded.hash_with(HashInclusions::All), h_tight);
+    assert_eq!(
+        banded.hash_with(HashInclusions::PixelsColorAndFacts),
+        h_tight
+    );
 
     // RGBX padding byte and Opaque alpha byte are excluded!
     let a = PixelBuf::from_bytes(
@@ -591,8 +604,8 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     )
     .unwrap();
     assert_eq!(
-        a.hash_with(HashInclusions::Pixels),
-        b.hash_with(HashInclusions::Pixels)
+        a.hash_with(HashInclusions::PixelsAndColor),
+        b.hash_with(HashInclusions::PixelsAndColor)
     );
 
     let op_a = PixelBuf::from_bytes(
@@ -616,8 +629,8 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     )
     .unwrap();
     assert_eq!(
-        op_a.hash_with(HashInclusions::Pixels),
-        op_b.hash_with(HashInclusions::Pixels)
+        op_a.hash_with(HashInclusions::PixelsAndColor),
+        op_b.hash_with(HashInclusions::PixelsAndColor)
     );
 
     // BitPacking::Lsb { bits: 10 } ignores high 6 padding bits!
@@ -629,22 +642,22 @@ fn portable_xxh3_hash_invariance_and_padding_exclusion() {
     let p1 = PixelBuf::from_samples(vec![512u16], 1, 1, lsb_spec.clone()).unwrap();
     let p2 = PixelBuf::from_samples(vec![512u16 | 0xFC00], 1, 1, lsb_spec).unwrap();
     assert_eq!(
-        p1.hash_with(HashInclusions::Pixels),
-        p2.hash_with(HashInclusions::Pixels)
+        p1.hash_with(HashInclusions::PixelsAndColor),
+        p2.hash_with(HashInclusions::PixelsAndColor)
     );
 
-    // HashInclusions sensitivity: color change preserves SamplesOnly, changes Pixels/All.
+    // HashInclusions sensitivity: color change preserves SamplesAndLayout, changes PixelsAndColor.
     let recolored = tight
         .try_clone()
         .unwrap()
         .relabel_color(ColorSpace::DISPLAY_P3)
         .unwrap();
     assert_eq!(
-        tight.hash_with(HashInclusions::SamplesOnly),
-        recolored.hash_with(HashInclusions::SamplesOnly)
+        tight.hash_with(HashInclusions::SamplesAndLayout),
+        recolored.hash_with(HashInclusions::SamplesAndLayout)
     );
     assert_ne!(
-        tight.hash_with(HashInclusions::Pixels),
-        recolored.hash_with(HashInclusions::Pixels)
+        tight.hash_with(HashInclusions::PixelsAndColor),
+        recolored.hash_with(HashInclusions::PixelsAndColor)
     );
 }

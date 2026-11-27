@@ -198,7 +198,7 @@ fn b04_d01_opaque_same_profile_icc_without_cms_and_cross_profile_lossless_refusa
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: icc_arc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -207,7 +207,7 @@ fn b04_d01_opaque_same_profile_icc_without_cms_and_cross_profile_lossless_refusa
         SampleLayout::RGBA8,
         ColorSpace::Icc {
             profile: icc_arc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::Opaque,
             intent: RenderingIntent::Perceptual,
         },
@@ -216,7 +216,7 @@ fn b04_d01_opaque_same_profile_icc_without_cms_and_cross_profile_lossless_refusa
         SampleLayout::RGB16,
         ColorSpace::Icc {
             profile: icc_arc,
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -246,7 +246,7 @@ fn b04_d01_opaque_same_profile_icc_without_cms_and_cross_profile_lossless_refusa
             SampleLayout::RGB8,
             ColorSpace::Icc {
                 profile: Arc::from(zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             },
@@ -342,7 +342,7 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     );
 
     let ptr_before = buf16.as_view().row(0).as_ptr() as usize;
-    compact_in_place(&mut buf16, AlphaCompaction::DropUnusedLanes);
+    assert!(compact_in_place(&mut buf16, AlphaCompaction::DropUnusedLanes).unwrap());
     assert_eq!(buf16.format(), &PixelFormat::GRAY8_SRGB);
     assert_eq!(buf16.as_view().row(0), &[0x40, 0x80, 0xC0]);
     assert_eq!(
@@ -450,7 +450,7 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
             SampleLayout::RGB8,
             ColorSpace::Icc {
                 profile: Arc::from(bad_icc.as_slice()),
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::Perceptual,
             },
@@ -520,7 +520,7 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
         SampleLayout::RGB8,
         ColorSpace::Icc {
             profile: p3_icc.clone(),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::RelativeColorimetric,
         },
@@ -537,7 +537,7 @@ fn b10_b11_b12_b13_b42_signaling_authority_strict_icc_and_owned_borrowed_pixels(
     let dual_sig = p3_same.resolve_signaling(&dual_origin).unwrap();
     assert_eq!(dual_sig.cicp, Some(Cicp::DISPLAY_P3));
     assert_eq!(dual_sig.icc.as_deref(), Some(p3_icc.as_ref()));
-    let conflict_origin = ColorOrigin::from_icc_and_cicp(p3_icc, Cicp::BT2100_PQ);
+    let conflict_origin = ColorOrigin::from_icc_and_cicp(p3_icc, Cicp::BT2100_PQ_YCBCR_FULL);
     assert!(p3_same.resolve_signaling(&conflict_origin).is_err());
 
     // B13: Gray CP=2 (unspecified primaries) with assigned TC=8 (Linear) synthesizes D65 Gray ICC!
@@ -795,7 +795,7 @@ fn d03_codemap_and_to_canonical_exhaustive() {
         AlphaPolicy::Forbid,
         DepthPolicy::Round,
         RangePolicy::Convert,
-        Nits::new(100.0).unwrap(),
+        Nits::new_positive(100.0).unwrap(),
         |v, s: &PixelFormat, p, pk| convert_to_buf_with_peak(v, s, p, pk),
     );
 }
@@ -808,7 +808,7 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
         SampleLayout::RGB16,
         ColorSpace::Icc {
             profile: Arc::clone(&p3_icc),
-            channels: 3,
+            color_channels: 3,
             alpha: AlphaMode::None,
             intent: RenderingIntent::Perceptual,
         },
@@ -867,7 +867,7 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
         "compaction must preserve original file provenance untouched"
     );
     assert_eq!(reduced_alloc.hdr(), hdr);
-    compact_in_place(&mut neutral_p3, AlphaCompaction::DropUnusedLanes);
+    assert!(compact_in_place(&mut neutral_p3, AlphaCompaction::DropUnusedLanes).unwrap());
     assert_eq!(neutral_p3.format(), &PixelFormat::GRAY8_SRGB);
     assert_eq!(neutral_p3.origin(), &orig);
 

@@ -29,8 +29,13 @@ use zenpixels_convert::{
 #[cfg(feature = "hdr-transfers")]
 #[test]
 fn b16_hlg_white_anchor_no_double_scale_and_relative_white_epsilon() {
-    use zenpixels_convert::{ChannelOrder, HlgMode, HlgRendering, RowPlan};
-    let hlg_1000 = HlgRendering::new(Nits::new(1000.0).unwrap(), 0.0, 1.2).unwrap();
+    use zenpixels_convert::{ChannelOrder, HlgMode, HlgRendering, HlgRenderingParams, RowPlan};
+    let hlg_1000 = HlgRendering::new(HlgRenderingParams {
+        peak: Nits::new_positive(1000.0).unwrap(),
+        black_nits: 0.0,
+        system_gamma: 1.2,
+    })
+    .unwrap();
     let src_lin = PixelFormat::RGBF32_LINEAR
         .with_primaries(Primaries::Bt2020)
         .with_white(DiffuseWhite::new(100.0).unwrap());
@@ -178,7 +183,7 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
         .with_hdr(hdr_meta);
 
     // 1. Scene-linear HDR [4,1,0] @ 203 nits with Declared CLL 812 -> sRGB8 MUST invoke tone mapper!
-    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0).unwrap())
+    let pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(203.0).unwrap())
         .with_tone_mapper(Arc::new(SpyMapper {
             calls: Arc::clone(&calls),
         }));
@@ -216,10 +221,11 @@ fn b17_scene_linear_hdr_triggers_tone_mapper_and_identity_retains_hdr_metadata()
 
     // 3. Ordinary SDR linear F32 [0.5, 0.25, 0.0] (no HDR metadata, peak <= ceiling) MUST NOT invoke mapper!
     let sdr_calls = Arc::new(AtomicUsize::new(0));
-    let sdr_pol = ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(203.0).unwrap())
-        .with_tone_mapper(Arc::new(SpyMapper {
-            calls: Arc::clone(&sdr_calls),
-        }));
+    let sdr_pol =
+        ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(203.0).unwrap())
+            .with_tone_mapper(Arc::new(SpyMapper {
+                calls: Arc::clone(&sdr_calls),
+            }));
     let sdr_buf =
         PixelBuf::from_typed(vec![0.5f32, 0.25, 0.0], 1, 1, PixelFormat::RGBF32_LINEAR).unwrap();
     let _ = convert_to_buf(&sdr_buf.as_view(), PixelFormat::RGB8_SRGB, &sdr_pol).unwrap();
@@ -371,9 +377,10 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     .with_color(bt709_narrow_alpha.clone())
     .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
 
-    let full_rgb = reconstruct_planar_f32(&full).unwrap();
+    let full_rgb = reconstruct_planar_f32(&full, &PlanarReconstructionOptions::nearest()).unwrap();
     let cropped_view = full.crop(PixelRect::new(1, 1, 3, 2)).unwrap();
-    let cropped_rgb = reconstruct_planar_f32(&cropped_view).unwrap();
+    let cropped_rgb =
+        reconstruct_planar_f32(&cropped_view, &PlanarReconstructionOptions::nearest()).unwrap();
     let full_then_crop = full_rgb.as_view().crop(PixelRect::new(1, 1, 3, 2)).unwrap();
     for row in 0..2 {
         assert_eq!(
@@ -434,8 +441,8 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     .unwrap()
     .with_color(bt709_narrow_alpha)
     .with_matrix_coefficients(YcbcrMatrix::Bt709.to_matrix_coefficients());
-    let rgb_nv12 = reconstruct_planar_f32(&nv12).unwrap();
-    let rgb_nv21 = reconstruct_planar_f32(&nv21).unwrap();
+    let rgb_nv12 = reconstruct_planar_f32(&nv12, &PlanarReconstructionOptions::nearest()).unwrap();
+    let rgb_nv21 = reconstruct_planar_f32(&nv21, &PlanarReconstructionOptions::nearest()).unwrap();
     for row in 0..3 {
         assert_eq!(rgb_nv12.as_view().row(row), full_rgb.as_view().row(row));
         assert_eq!(rgb_nv21.as_view().row(row), full_rgb.as_view().row(row));
@@ -520,7 +527,7 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     .unwrap()
     .with_color(ColorSpace::SRGB)
     .with_matrix_coefficients(YcbcrMatrix::Identity.to_matrix_coefficients());
-    let gbr_out = reconstruct_planar_f32(&gbr_pv).unwrap();
+    let gbr_out = reconstruct_planar_f32(&gbr_pv, &PlanarReconstructionOptions::nearest()).unwrap();
     let gp = gbr_out.as_view().row_as::<f32>(0).unwrap();
     assert_eq!(gp[0], 0.0);
     assert!((gp[1] - 128.0 / 255.0).abs() < 1e-6);
@@ -530,7 +537,8 @@ fn b24_b39_ycbcr_odd_crop_phase_nv12_nv21_i420_gbr_monochrome_and_exact_white() 
     let mono_pv = PlanarView::new(1, 1, &[PlaneView::new(&[235u8], 1, 1, 1, y_spec).unwrap()])
         .unwrap()
         .with_color(bt709_narrow);
-    let mono_out = reconstruct_planar_f32(&mono_pv).unwrap();
+    let mono_out =
+        reconstruct_planar_f32(&mono_pv, &PlanarReconstructionOptions::nearest()).unwrap();
     assert_eq!(
         mono_out.as_view().row_as::<f32>(0).unwrap(),
         &[1.0, 1.0, 1.0]
@@ -647,7 +655,7 @@ fn b28_b29_b30_b40_gainmap_analytic_oracle_31stops_64tap_inclusive_and_gamma_sim
     let gm_spec = PixelFormat::new(
         SampleLayout::GRAY8,
         ColorSpace::Untagged {
-            channels: 1,
+            total_channels: 1,
             alpha: AlphaMode::None,
         },
     );

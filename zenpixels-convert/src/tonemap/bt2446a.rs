@@ -24,8 +24,9 @@
 //!
 //! The kernel is a magetypes-defined `f32x16` strip that resolves to
 //! AVX-512 on V4, 2× AVX2 on V3, NEON on aarch64, WASM-SIMD on wasm32, and
-//! the polyfill scalar on everything else. [`Bt2446A::map_rgb`] and the last
-//! 1–15 pixels of a row run the same lanes, padded.
+//! the polyfill scalar on everything else.
+//! [`Bt2446A::map_rgb_bt2020_peak_normalized`] and the last 1–15 pixels of
+//! a row run the same lanes, padded.
 
 use libm::powf;
 use magemath::SimdMath;
@@ -97,16 +98,22 @@ const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
     .caller()
     .bits();
 
-/// BT.2446 Method A tonemapper.
+/// BT.2446 Method A tonemapper with explicit baked HDR/SDR peak luminances.
 ///
-/// Construct with [`with_peaks`](Self::with_peaks) or [`pipeline_managed`](Self::pipeline_managed), then apply via [`map_rgb`](Self::map_rgb) or
-/// [`map_strip_simd`](Self::map_strip_simd). Input is linear-light
-/// BT.2020 RGB normalized so `1.0 = hdr_peak_nits`. Output is linear-light
-/// BT.2020 RGB normalized so `1.0 = sdr_peak_nits` — the BT.2446-1 §4
-/// pipeline natively emits gamma-encoded `R'_TMO` `G'_TMO` `B'_TMO`
-/// (BT.1886 1/2.4); we apply the BT.1886 EOTF (`^2.4`) at the output to
-/// deliver a linear-light contract (matching libplacebo's own `bt2446a`
-/// which ends with `bt1886_eotf`).
+/// Construct with [`with_peaks`](Self::with_peaks), then apply directly via
+/// [`map_rgb_bt2020_peak_normalized`](Self::map_rgb_bt2020_peak_normalized) or
+/// [`map_strip_bt2020_peak_normalized`](Self::map_strip_bt2020_peak_normalized),
+/// or pass into [`ConvertPolicy::with_tone_mapper`](crate::ConvertPolicy::with_tone_mapper).
+/// For pipeline-managed peak resolution (measuring or reading declared metadata
+/// at [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare) time), use
+/// [`Bt2446APipelineManaged`] (or [`Bt2446A::pipeline_managed`]).
+///
+/// Input is linear-light BT.2020 RGB normalized so `1.0 = hdr_peak_nits`. Output
+/// is linear-light BT.2020 RGB normalized so `1.0 = sdr_peak_nits` — the
+/// BT.2446-1 §4 pipeline natively emits gamma-encoded `R'_TMO` `G'_TMO` `B'_TMO`
+/// (BT.1886 1/2.4); we apply the BT.1886 EOTF (`^2.4`) at the output to deliver
+/// a linear-light contract (matching libplacebo's own `bt2446a` which ends with
+/// `bt1886_eotf`).
 ///
 /// # When to pick this
 ///
@@ -125,50 +132,52 @@ const BT2446_EOTF24_SAT: u128 = PowfOptions::new()
 /// # {
 /// use zenpixels_convert::{Nits, tonemap::Bt2446A};
 ///
-/// let curve = Bt2446A::with_peaks(Nits::new_or_panic(1000.0), Nits::new_or_panic(100.0));
-/// let sdr = curve.map_rgb([0.6, 0.4, 0.2]);
+/// let curve = Bt2446A::with_peaks(
+///     Nits::new_positive_or_panic(1000.0),
+///     Nits::new_positive_or_panic(100.0),
+/// );
+/// let sdr = curve.map_rgb_bt2020_peak_normalized([0.6, 0.4, 0.2]);
 /// assert!(sdr.iter().all(|&c| (0.0..=1.0).contains(&c)));
 /// # }
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Bt2446A {
-    /// Source peak luminance in cd/m² as constructed. `0.0` signals
-    /// "pipeline-managed" — the curve's coefficients are deferred until
-    /// the pipeline supplies the peak via [`ToneMapContext`](crate::tonemap::ToneMapContext) at
-    /// `prepare()` time. See
-    /// [`Bt2446A::pipeline_managed`](Self::pipeline_managed) and
-    /// [`Bt2446A::peaks_baked`](Self::peaks_baked).
-    pub(crate) source_peak_nits: f32,
-    /// Target peak luminance in cd/m² as constructed. `0.0` signals
-    /// "pipeline-managed" alongside `source_peak_nits`.
-    pub(crate) target_peak_nits: f32,
-    /// Precomputed `ρ_H = 1 + 32 · (L_HDR / 10000)^(1/2.4)`. Valid only
-    /// when [`peaks_baked`](Self::peaks_baked) returns `true`; otherwise
-    /// the kernel must read peaks from a [`ToneMapContext`](crate::tonemap::ToneMapContext) instead.
+    source_peak: zenpixels::Nits,
+    target_peak: zenpixels::Nits,
     pub(crate) rho_hdr: f32,
     pub(crate) inv_log_rho_hdr: f32,
     pub(crate) rho_sdr: f32,
     pub(crate) inv_rho_sdr_minus_1: f32,
 }
 
+/// Pipeline-managed BT.2446 Method A [`ToneMapper`](crate::tonemap::ToneMapper)
+/// descriptor whose HDR/SDR peak luminances are supplied by [`ImagePlan`](crate::ImagePlan)
+/// or [`RowPlan`](crate::RowPlan) at
+/// [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare) time.
+///
+/// Unlike [`Bt2446A`] (which always holds baked peaks and exposes direct pixel/strip
+/// mapping methods), `Bt2446APipelineManaged` cannot be called directly without
+/// resolving peaks through [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Bt2446APipelineManaged;
+
 impl Bt2446A {
     /// Create a new BT.2446 Method A tonemapper with explicit typed peak luminances baked in.
     ///
-    /// - `hdr_peak`: peak luminance of HDR content (e.g. `Nits::new_or_panic(1000.0)`).
-    /// - `sdr_peak`: peak luminance of SDR target (e.g. `Nits::new_or_panic(100.0)`).
+    /// - `hdr_peak`: peak luminance of HDR content (e.g. `Nits::new_positive_or_panic(1000.0)`).
+    /// - `sdr_peak`: peak luminance of SDR target (e.g. `Nits::new_positive_or_panic(100.0)`).
     ///
-    /// Use this when the source peak is already known at construction
-    /// time. For pipeline-orchestrated peak resolution via
+    /// Use this when the source peak is already known at construction time.
+    /// For pipeline-orchestrated peak resolution via
     /// [`PeakSource`](zenpixels::PeakSource) (`Measured`, `Declared`, or `Fixed`)
-    /// at `prepare()` time, use [`pipeline_managed`](Self::pipeline_managed) instead.
+    /// at `prepare()` time, use [`pipeline_managed`](Self::pipeline_managed) /
+    /// [`Bt2446APipelineManaged`] instead.
     #[must_use]
     pub fn with_peaks(hdr_peak: zenpixels::Nits, sdr_peak: zenpixels::Nits) -> Self {
-        let hdr_peak_nits = hdr_peak.nits();
-        let sdr_peak_nits = sdr_peak.nits();
-        let compiled = Bt2446AExecutor::compile(hdr_peak_nits, sdr_peak_nits);
+        let compiled = Bt2446AExecutor::compile(hdr_peak.nits(), sdr_peak.nits());
         Self {
-            source_peak_nits: hdr_peak_nits,
-            target_peak_nits: sdr_peak_nits,
+            source_peak: hdr_peak,
+            target_peak: sdr_peak,
             rho_hdr: compiled.rho_hdr,
             inv_log_rho_hdr: compiled.inv_log_rho_hdr,
             rho_sdr: compiled.rho_sdr,
@@ -176,93 +185,62 @@ impl Bt2446A {
         }
     }
 
-    /// Construct a BT.2446-A descriptor whose peaks are supplied by the
-    /// pipeline at [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare)
-    /// time.
+    /// Construct a pipeline-managed BT.2446-A descriptor ([`Bt2446APipelineManaged`])
+    /// whose peaks are supplied by the pipeline at
+    /// [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare) time.
     ///
     /// Use this when you don't know the source peak nits at the
     /// builder-construction site and want [`ImagePlan`](crate::ImagePlan) to
     /// resolve peaks via [`PeakSource`](zenpixels::PeakSource) or
     /// [`measure_content_light_level`](crate::measure_content_light_level).
-    ///
-    /// The returned descriptor stores no coefficients — the compiled
-    /// strip executor is produced from the resolved peaks inside
-    /// [`ToneMapper::prepare`](crate::tonemap::ToneMapper::prepare).
-    /// [`peaks_baked`](Self::peaks_baked) returns `false`;
-    /// [`requirements`](crate::tonemap::ToneMapper::requirements) returns
-    /// [`Requirements::SOURCE_PEAK_ONLY`](crate::tonemap::Requirements::SOURCE_PEAK_ONLY).
     #[must_use]
-    pub fn pipeline_managed() -> Self {
-        Self {
-            source_peak_nits: 0.0,
-            target_peak_nits: 0.0,
-            rho_hdr: 0.0,
-            inv_log_rho_hdr: 0.0,
-            rho_sdr: 0.0,
-            inv_rho_sdr_minus_1: 0.0,
-        }
+    pub const fn pipeline_managed() -> Bt2446APipelineManaged {
+        Bt2446APipelineManaged
     }
 
-    /// `true` when this descriptor was constructed via
-    /// [`with_peaks`](Self::with_peaks) with explicit peaks — its coefficients are
-    /// already compiled. `false` after
-    /// [`pipeline_managed`](Self::pipeline_managed); the pipeline must
-    /// supply peaks via [`ToneMapContext`](crate::tonemap::ToneMapContext)
-    /// at `prepare()` time.
+    /// Baked HDR source peak luminance in cd/m².
+    #[inline]
     #[must_use]
-    pub fn peaks_baked(&self) -> bool {
-        self.source_peak_nits > 0.0 && self.target_peak_nits > 0.0
+    pub const fn source_peak(&self) -> zenpixels::Nits {
+        self.source_peak
     }
 
-    /// HDR source peak luminance in cd/m², as constructed via
-    /// [`with_peaks`](Self::with_peaks). Returns `0.0` for
-    /// [`pipeline_managed`](Self::pipeline_managed) descriptors —
-    /// peaks live on the [`ToneMapContext`](crate::tonemap::ToneMapContext) in that mode.
+    /// Baked SDR target peak luminance in cd/m².
+    #[inline]
     #[must_use]
-    pub fn source_peak_nits(&self) -> f32 {
-        self.source_peak_nits
+    pub const fn target_peak(&self) -> zenpixels::Nits {
+        self.target_peak
     }
 
-    /// SDR target peak luminance in cd/m², as constructed. Returns `0.0`
-    /// for [`pipeline_managed`](Self::pipeline_managed) descriptors.
-    #[must_use]
-    pub fn target_peak_nits(&self) -> f32 {
-        self.target_peak_nits
-    }
-
-    /// Map a single HDR pixel (linear-light BT.2020 RGB, source-normalized)
-    /// to an SDR pixel (linear-light BT.2020 RGB, target-normalized).
+    /// Map a single HDR pixel (linear-light **BT.2020** RGB normalized so
+    /// `1.0 = source_peak()`) to an SDR pixel (linear-light **BT.2020** RGB
+    /// normalized so `1.0 = target_peak()`).
     ///
     /// Input must be finite; `NaN`/negative channels are not scrubbed here
-    /// (see [`Self::map_strip_simd`]).
+    /// (see [`Self::map_strip_bt2020_peak_normalized`]).
     ///
-    /// Implemented as a 1-element strip through [`Self::map_strip_simd`].
-    /// A single pixel runs the same lanes as a row, padded.
+    /// Implemented as a 1-element strip through
+    /// [`Self::map_strip_bt2020_peak_normalized`]. A single pixel runs the
+    /// same lanes as a row, padded.
+    #[doc(alias = "map_rgb")]
     #[must_use]
-    pub fn map_rgb(&self, rgb: [f32; 3]) -> [f32; 3] {
+    pub fn map_rgb_bt2020_peak_normalized(&self, rgb: [f32; 3]) -> [f32; 3] {
         let mut buf = [rgb];
-        self.map_strip_simd(&mut buf);
+        self.map_strip_bt2020_peak_normalized(&mut buf);
         buf[0]
     }
 
-    /// Apply the curve to a strip of HDR pixels in place, dispatching to
-    /// the widest available SIMD tier.
+    /// Apply the curve to a strip of linear-light **BT.2020** RGB pixels
+    /// (normalized so `1.0 = source_peak()` on input and `1.0 = target_peak()`
+    /// on output) in place, dispatching to the widest available SIMD tier.
+    ///
     /// # Input contract
     ///
     /// Expects **finite** linear-light BT.2020 RGB. Non-finite input is
     /// not scrubbed, and `NaN`/`inf` can reach the output. The conversion pipeline
-    /// (`NativePlan` tone-map step) scrubs non-finite values *before*
-    /// calling this; direct callers own that themselves.
-    ///
-    /// **Panics** if called on a
-    /// [`pipeline_managed`](Self::pipeline_managed) descriptor, for the same
-    /// reason as [`map_rgb`](Self::map_rgb).
-    pub fn map_strip_simd(&self, strip: &mut [[f32; 3]]) {
-        assert!(
-            self.peaks_baked(),
-            "Bt2446A::map_strip_simd called on a pipeline-managed descriptor; \
-             obtain a compiled executor through ToneMapper::prepare first"
-        );
+    /// scrubs non-finite values *before* calling this; direct callers own that themselves.
+    #[doc(alias = "map_strip_simd")]
+    pub fn map_strip_bt2020_peak_normalized(&self, strip: &mut [[f32; 3]]) {
         archmage::attuned!(
             bt2446a_tier(
                 strip,
@@ -350,38 +328,36 @@ impl crate::tonemap::StripMapper for Bt2446AExecutor {
     }
 }
 
+fn prepare_bt2446a_peaks(
+    src: f32,
+    dst: f32,
+) -> Result<crate::tonemap::PreparedMapper, whereat::At<crate::ConvertError>> {
+    if !src.is_finite() || !dst.is_finite() || src < 1e-3 || dst < 1e-3 {
+        return Err(crate::error::err_at(crate::ConvertError::ToneMapperFailed));
+    }
+    let exec = Bt2446AExecutor::compile(src, dst);
+    if !exec.rho_hdr.is_finite()
+        || !exec.inv_log_rho_hdr.is_finite()
+        || !exec.rho_sdr.is_finite()
+        || !exec.inv_rho_sdr_minus_1.is_finite()
+    {
+        return Err(crate::error::err_at(crate::ConvertError::ToneMapperFailed));
+    }
+    Ok(crate::tonemap::PreparedMapper::Streaming(
+        alloc::boxed::Box::new(exec),
+    ))
+}
+
 impl crate::tonemap::ToneMapper for Bt2446A {
     fn requirements(&self) -> crate::tonemap::Requirements {
-        if self.peaks_baked() {
-            crate::tonemap::Requirements::NONE
-        } else {
-            crate::tonemap::Requirements::SOURCE_PEAK_ONLY
-        }
+        crate::tonemap::Requirements::NONE
     }
 
     fn prepare(
         &self,
-        ctx: &crate::tonemap::ToneMapContext,
+        _ctx: &crate::tonemap::ToneMapContext,
     ) -> Result<crate::tonemap::PreparedMapper, whereat::At<crate::ConvertError>> {
-        let (src, dst) = if self.peaks_baked() {
-            (self.source_peak_nits, self.target_peak_nits)
-        } else {
-            (ctx.source_peak_nits, ctx.target_peak_nits)
-        };
-        if !src.is_finite() || !dst.is_finite() || src < 1e-3 || dst < 1e-3 {
-            return Err(crate::error::err_at(crate::ConvertError::ToneMapperFailed));
-        }
-        let exec = Bt2446AExecutor::compile(src, dst);
-        if !exec.rho_hdr.is_finite()
-            || !exec.inv_log_rho_hdr.is_finite()
-            || !exec.rho_sdr.is_finite()
-            || !exec.inv_rho_sdr_minus_1.is_finite()
-        {
-            return Err(crate::error::err_at(crate::ConvertError::ToneMapperFailed));
-        }
-        Ok(crate::tonemap::PreparedMapper::Streaming(
-            alloc::boxed::Box::new(exec),
-        ))
+        prepare_bt2446a_peaks(self.source_peak.nits(), self.target_peak.nits())
     }
 
     fn name(&self) -> &'static str {
@@ -393,11 +369,32 @@ impl crate::tonemap::ToneMapper for Bt2446A {
     }
 
     fn baked_peaks(&self) -> Option<(f32, f32)> {
-        if self.peaks_baked() {
-            Some((self.source_peak_nits, self.target_peak_nits))
-        } else {
-            None
-        }
+        Some((self.source_peak.nits(), self.target_peak.nits()))
+    }
+}
+
+impl crate::tonemap::ToneMapper for Bt2446APipelineManaged {
+    fn requirements(&self) -> crate::tonemap::Requirements {
+        crate::tonemap::Requirements::SOURCE_PEAK_ONLY
+    }
+
+    fn prepare(
+        &self,
+        ctx: &crate::tonemap::ToneMapContext,
+    ) -> Result<crate::tonemap::PreparedMapper, whereat::At<crate::ConvertError>> {
+        prepare_bt2446a_peaks(ctx.source_peak_nits, ctx.target_peak_nits)
+    }
+
+    fn name(&self) -> &'static str {
+        "bt2446a"
+    }
+
+    fn working_primaries_for(&self, _target: zenpixels::Primaries) -> zenpixels::Primaries {
+        zenpixels::Primaries::Bt2020
+    }
+
+    fn baked_peaks(&self) -> Option<(f32, f32)> {
+        None
     }
 }
 
@@ -596,8 +593,8 @@ mod tests {
         // compression curve. Pin ρ to the spec values so the bug can't
         // return.
         let tm1k = Bt2446A::with_peaks(
-            zenpixels::Nits::new_or_panic(1000.0),
-            zenpixels::Nits::new_or_panic(100.0),
+            zenpixels::Nits::new_positive_or_panic(1000.0),
+            zenpixels::Nits::new_positive_or_panic(100.0),
         );
         assert!(
             (tm1k.rho_hdr - 13.260).abs() < 0.02,
@@ -605,8 +602,8 @@ mod tests {
             tm1k.rho_hdr
         );
         let tm10k = Bt2446A::with_peaks(
-            zenpixels::Nits::new_or_panic(10_000.0),
-            zenpixels::Nits::new_or_panic(100.0),
+            zenpixels::Nits::new_positive_or_panic(10_000.0),
+            zenpixels::Nits::new_positive_or_panic(100.0),
         );
         assert!(
             (tm10k.rho_hdr - 33.0).abs() < 0.05,
@@ -649,11 +646,11 @@ mod tests {
 
         for &(hdr, sdr) in &[(1000.0_f32, 100.0_f32), (4000.0, 100.0), (10_000.0, 100.0)] {
             let tm = Bt2446A::with_peaks(
-                zenpixels::Nits::new_or_panic(hdr),
-                zenpixels::Nits::new_or_panic(sdr),
+                zenpixels::Nits::new_positive_or_panic(hdr),
+                zenpixels::Nits::new_positive_or_panic(sdr),
             );
             for &x in &[0.05_f32, 0.18, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0] {
-                let got = tm.map_rgb([x, x, x])[0];
+                let got = tm.map_rgb_bt2020_peak_normalized([x, x, x])[0];
                 let want = libplacebo_eetf_then_eotf(x, hdr, sdr);
                 assert!(
                     (got - want).abs() < 1e-4,
@@ -672,14 +669,14 @@ mod tests {
         // which the consumer then double-gamma-encoded — every pixel came
         // out far too bright (median ΔE2000 ≈ 23 on the shootout corpus).
         let tm = Bt2446A::with_peaks(
-            zenpixels::Nits::new_or_panic(1000.0),
-            zenpixels::Nits::new_or_panic(100.0),
+            zenpixels::Nits::new_positive_or_panic(1000.0),
+            zenpixels::Nits::new_positive_or_panic(100.0),
         );
 
-        let black = tm.map_rgb([0.0, 0.0, 0.0]);
+        let black = tm.map_rgb_bt2020_peak_normalized([0.0, 0.0, 0.0]);
         assert_eq!(black, [0.0, 0.0, 0.0]);
 
-        let peak = tm.map_rgb([1.0, 1.0, 1.0]);
+        let peak = tm.map_rgb_bt2020_peak_normalized([1.0, 1.0, 1.0]);
         for c in peak {
             assert!(
                 (c - 1.0).abs() < 1e-4,
@@ -689,7 +686,7 @@ mod tests {
 
         // Mid-grey trace: 0.18 HDR → 0.660 gamma → 0.370 linear via ^2.4.
         // Pre-fix returned ≈0.660 (gamma-encoded); post-fix returns ≈0.370.
-        let mid = tm.map_rgb([0.18, 0.18, 0.18]);
+        let mid = tm.map_rgb_bt2020_peak_normalized([0.18, 0.18, 0.18]);
         for c in mid {
             assert!(
                 (c - 0.370).abs() < 0.02,

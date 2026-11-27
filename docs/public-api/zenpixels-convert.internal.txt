@@ -9,24 +9,24 @@
 
 ## summary
 #
-#   inherent methods                           26
-#   trait roster entries (type × trait)        30
+#   inherent methods                           28
+#   trait roster entries (type × trait)        32
 #
 # per-module pub lines:
 #   codes                             4
 #   compact                           2
 #   error                             1
-#   gainmap                           4
+#   gainmap                           5
 #   icc_profiles                      1
 #   measure                           1
 #   negotiate                         3
 #   output                            2
 #   planar                            2
 #   policy                            4
-#   tonemap                           1
+#   tonemap                           2
 #   ycbcr                             1
 
-## items (26 lines)
+## items (28 lines)
 
 pub fn codes::CodeMap::assert_fields_are_eq(&self)
 pub fn codes::CodeMapError::assert_fields_are_eq(&self)
@@ -39,6 +39,7 @@ pub fn gainmap::GainMapDownsample::assert_fields_are_eq(&self)
 pub fn gainmap::GainMapLayer::assert_fields_are_eq(&self)
 pub fn gainmap::GainMapOrientation::assert_fields_are_eq(&self)
 pub fn gainmap::GainMapResample::assert_fields_are_eq(&self)
+pub fn gainmap::LinearInputChannels::assert_fields_are_eq(&self)
 pub fn icc_profiles::SynthesizedIcc::assert_fields_are_eq(&self)
 pub fn measure::LightLevelMethod::assert_fields_are_eq(&self)
 pub fn negotiate::FormatCost::assert_fields_are_eq(&self)
@@ -52,10 +53,11 @@ pub fn policy::DepthPolicy::assert_fields_are_eq(&self)
 pub fn policy::GamutPolicy::assert_fields_are_eq(&self)
 pub fn policy::LumaDomain::assert_fields_are_eq(&self)
 pub fn policy::RangePolicy::assert_fields_are_eq(&self)
+pub fn tonemap::bt2446a::Bt2446APipelineManaged::assert_fields_are_eq(&self)
 pub fn tonemap::tone_mapper::Requirements::assert_fields_are_eq(&self)
 pub fn ycbcr::YcbcrMatrix::assert_fields_are_eq(&self)
 
-## trait impls (30 types)
+## trait impls (32 types)
 
 Lcms: TrivialClone
 LcmsUnoptimized: TrivialClone
@@ -71,6 +73,7 @@ gainmap::GainMapDownsample: TrivialClone
 gainmap::GainMapOrientation: TrivialClone
 gainmap::GainMapResample: TrivialClone
 gainmap::GainMapTarget: TrivialClone
+gainmap::LinearInputChannels: TrivialClone
 gamut::GamutMatrix: TrivialClone
 measure::LightLevelMethod: TrivialClone
 negotiate::FormatCost: TrivialClone
@@ -85,5 +88,6 @@ policy::LumaCoefficients: TrivialClone
 policy::LumaDomain: TrivialClone
 policy::RangePolicy: TrivialClone
 tonemap::bt2446a::Bt2446A: TrivialClone
+tonemap::bt2446a::Bt2446APipelineManaged: TrivialClone
 tonemap::tone_mapper::Requirements: TrivialClone
 ycbcr::YcbcrMatrix: TrivialClone

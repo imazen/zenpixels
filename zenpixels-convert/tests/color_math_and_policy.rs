@@ -409,7 +409,12 @@ fn pq_and_hlg_accuracy_bounds() {
     assert_eq!(back_u16[65_535 * 3], 65_535);
 
     // HLG BT.2100-3 with black lift Lb=0.05: code 0.0 decodes to exact 0.05 / 203.0!
-    let hlg_lift = HlgRendering::new(Nits::new(1000.0).unwrap(), 0.05, 1.2).unwrap();
+    let hlg_lift = HlgRendering::new(zenpixels_convert::HlgRenderingParams {
+        peak: Nits::new_positive(1000.0).unwrap(),
+        black_nits: 0.05,
+        system_gamma: 1.2,
+    })
+    .unwrap();
     let hlg_spec = PixelFormat::new(
         SampleLayout::RGBF32,
         ColorSpace::BT2100_HLG_SCENE.with_transfer(Transfer::Hlg(HlgMode::Display(hlg_lift))),

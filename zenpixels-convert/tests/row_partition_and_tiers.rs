@@ -434,8 +434,8 @@ fn row_partition_and_odd_stride_canary_invariance_matrix() {
             "PQ16->sRGB8_BT2446A",
             PixelFormat::RGB16_BT2100_PQ,
             PixelFormat::RGB8_SRGB,
-            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new(100.0).unwrap()),
-            Some(Nits::new(1000.0).unwrap()),
+            ConvertPolicy::display_sdr(DiffuseWhite::BT2408, Nits::new_positive(100.0).unwrap()),
+            Some(Nits::new_positive(1000.0).unwrap()),
         );
     }
 }
@@ -457,8 +457,8 @@ fn portable_xxh3_digests_are_invariant_across_simd_and_stride() {
         src_strided.as_view_mut().row_mut(y).copy_from_slice(&row);
     }
     assert_eq!(
-        src_tight.hash_with(HashInclusions::SamplesOnly),
-        src_strided.hash_with(HashInclusions::SamplesOnly),
+        src_tight.hash_with(HashInclusions::SamplesAndLayout),
+        src_strided.hash_with(HashInclusions::SamplesAndLayout),
         "tight vs Cache64-strided source XXH3 must match"
     );
 
@@ -509,8 +509,8 @@ fn portable_xxh3_digests_are_invariant_across_simd_and_stride() {
         .unwrap()
         .execute(&src_strided)
         .unwrap();
-        let h_sc = out_sc.hash_with(HashInclusions::Pixels);
-        let h_all = out_all.hash_with(HashInclusions::Pixels);
+        let h_sc = out_sc.hash_with(HashInclusions::PixelsAndColor);
+        let h_all = out_all.hash_with(HashInclusions::PixelsAndColor);
         assert_eq!(
             h_sc, h_all,
             "{name}: portable XXH3 digest differed between SCALAR/tight and ALL/strided"
