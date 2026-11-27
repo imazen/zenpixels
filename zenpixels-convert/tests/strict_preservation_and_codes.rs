@@ -342,7 +342,10 @@ fn b06_b07_b08_d02_scan_facts_image_plan_reuse_and_load_bearing_reduction() {
     );
 
     let ptr_before = buf16.as_view().row(0).as_ptr() as usize;
-    assert!(compact_in_place(&mut buf16, AlphaCompaction::DropUnusedLanes).unwrap());
+    assert_eq!(
+        compact_in_place(&mut buf16, AlphaCompaction::DropUnusedLanes).unwrap(),
+        zenpixels_convert::CompactOutcome::Compacted
+    );
     assert_eq!(buf16.format(), &PixelFormat::GRAY8_SRGB);
     assert_eq!(buf16.as_view().row(0), &[0x40, 0x80, 0xC0]);
     assert_eq!(
@@ -867,7 +870,10 @@ fn phase4a_icc_hdr_identity_load_bearing_origin_and_cicp_alias() {
         "compaction must preserve original file provenance untouched"
     );
     assert_eq!(reduced_alloc.hdr(), hdr);
-    assert!(compact_in_place(&mut neutral_p3, AlphaCompaction::DropUnusedLanes).unwrap());
+    assert_eq!(
+        compact_in_place(&mut neutral_p3, AlphaCompaction::DropUnusedLanes).unwrap(),
+        zenpixels_convert::CompactOutcome::Compacted
+    );
     assert_eq!(neutral_p3.format(), &PixelFormat::GRAY8_SRGB);
     assert_eq!(neutral_p3.origin(), &orig);
 

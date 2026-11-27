@@ -128,7 +128,7 @@ fn speccow_zero_arc_bumps_across_views_crops_and_mut_views() {
     }
 
     {
-        let mut mv = buf.try_make_view_mut().unwrap();
+        let mut mv = buf.try_cow_view_mut().unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
         let sub = mv.crop_mut(PixelRect::new(0, 0, 4, 4)).unwrap();
         assert_eq!(Arc::strong_count(&profile), 2);
@@ -822,7 +822,7 @@ fn icc1_cicptype_custom_primaries_amendment_and_annex1() {
     //    losslessly through s15Fixed16Number and back!
     for code in 0u16..=50_000 {
         let x = (code as f32) / 50_000.0;
-        let c = Chromaticity::new_primary(x, 0.5).unwrap();
+        let c = Chromaticity::new_unbounded_primary(x, 0.5).unwrap();
         let (s15_x, _) = c.to_s15fixed16();
         let back = (((s15_x as f64) / 65536.0) * 50_000.0 + 0.5) as u16;
         assert_eq!(back, code, "HAGC code {code} failed s15Fixed16 round-trip");

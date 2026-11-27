@@ -73,8 +73,21 @@ pub(crate) type GainMapCombineFn =
 /// Dead-stripping bundle of optional SIMD accelerators.
 ///
 /// Build a custom subset at compile time using `const` helpers (`SCALAR`,
-/// `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `ROW_PIPELINE`, `ALL`, `.with_*()`,
+/// `LAYOUT`, `WEB_SDR`, `HDR`, `OKLAB`, `GAINMAP`, `ROW_PIPELINE`, `ALL`, `.with_*()`,
 /// `.merge_prefer_self()`).
+///
+/// ## Bundle Composition
+///
+/// | Constant | Byte layout | Strip SIMD | sRGB + 3×3 + srgb8 matrix | BT.709 / γ2.2 | F16 + PQ/HLG | Oklab | GainMap |
+/// |---|---|---|---|---|---|---|---|
+/// | `SCALAR` | — | — | — | — | — | — | — |
+/// | `LAYOUT` | ✓ | — | — | — | — | — | — |
+/// | `WEB_SDR` | ✓ | ✓ | ✓ | — | — | — | — |
+/// | `HDR` | — | ✓ | gamut 3×3 only | — | ✓ | — | — |
+/// | `OKLAB` | — | ✓ | — | — | — | ✓ | — |
+/// | `GAINMAP` | — | — | — | — | — | — | ✓ |
+/// | `ROW_PIPELINE` (`default` w/ `fast`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (if feature) | — |
+/// | `ALL` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (if feature) | ✓ (if feature) |
 #[derive(Clone, Copy)]
 pub struct Accelerators {
     /// `garb` SIMD U8 byte-only layout fast paths (`RGBA↔BGRA`, `RGB↔RGBA`, `Gray→RGBA`).

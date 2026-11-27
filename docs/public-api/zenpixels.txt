@@ -9,20 +9,20 @@
 ## summary
 #
 #   pub modules                                15
-#   pub types (struct/enum/trait/alias)       223
+#   pub types (struct/enum/trait/alias)       225
 #   pub consts/statics                       1206
 #   free functions                             18
 #   inherent methods                          744
 #   struct fields                             309
-#   enum variants                             522
+#   enum variants                             526
 #   re-exports                                  1
-#   trait roster entries (type × trait)       658
-#   auto-trait-complete types                  90
+#   trait roster entries (type × trait)       660
+#   auto-trait-complete types                  91
 #   auto-trait exceptions                      15
 #
 # per-module pub lines:
-#   (root)                         1397
-#   buffer                          568
+#   (root)                         1400
+#   buffer                          571
 #   cicp                            102
 #   color                           486
 #   facts                            36
@@ -35,7 +35,7 @@
 #   sample                           41
 #   storage                          96
 
-## items (2497 lines)
+## items (2502 lines)
 
 pub mod zenpixels
 pub use At
@@ -58,6 +58,8 @@ pub buffer::BufferError::OutOfBounds
 pub buffer::BufferError::StrideNotPixelAligned
 pub buffer::BufferError::StrideTooSmall
 pub buffer::BufferError::UnverifiedOpaqueAlpha
+pub buffer::InPlaceTransformDecision::Unchanged
+pub buffer::InPlaceTransformDecision::Updated(buffer::InPlaceTransformOutput)
 pub buffer::PixelCow::Borrowed(buffer::PixelView<'a>)
 pub buffer::PixelCow::Owned(buffer::PixelBuf)
 pub fn buffer::PixelCow<'a>::as_view(&self) -> buffer::PixelView<'_>
@@ -194,9 +196,9 @@ pub const fn buffer::PixelBuf::stride_bytes(&self) -> usize [also: (root)]
 pub fn buffer::PixelBuf::sub_rows(&self, u32, u32) -> core::result::Result<buffer::PixelView<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::sub_rows_mut(&mut self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::swizzle_in_place(&mut self, layout::ChannelOrder) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::transform_in_place<F>(&mut self, F) -> core::result::Result<(), whereat::at::At<buffer::BufferError>> where F: core::ops::function::FnOnce(&mut [u8], buffer::InPlaceTransformInput<'_>) -> core::option::Option<buffer::InPlaceTransformOutput>
+pub fn buffer::PixelBuf::transform_in_place<F>(&mut self, F) -> core::result::Result<(), whereat::at::At<buffer::BufferError>> where F: core::ops::function::FnOnce(&mut [u8], buffer::InPlaceTransformInput<'_>) -> buffer::InPlaceTransformDecision
 pub fn buffer::PixelBuf::try_clone(&self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_make_view_mut(&mut self) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::try_cow_view_mut(&mut self) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PixelBuf::width(&self) -> u32 [also: (root)]
 pub fn buffer::PixelBuf::with_hdr(self, color::HdrMetadata) -> Self
 pub const fn buffer::PixelBuf::with_orientation(self, orientation::Orientation) -> Self [also: (root)]
@@ -306,7 +308,7 @@ pub fn buffer::PlanarBuf::as_view_mut(&mut self) -> buffer::PlanarViewMut<'_>
 pub fn buffer::PlanarBuf::crop_view(&self, layout::PixelRect) -> core::result::Result<buffer::PlanarView<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::crop_view_mut(&mut self, layout::PixelRect) -> core::result::Result<buffer::PlanarViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::try_as_view(&self) -> core::result::Result<buffer::PlanarView<'_>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PlanarBuf::try_make_view_mut(&mut self) -> core::result::Result<buffer::PlanarViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlanarBuf::try_cow_view_mut(&mut self) -> core::result::Result<buffer::PlanarViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlanarView<'a>::alpha_override(&self) -> core::option::Option<color::AlphaMode> [also: (root)]
 pub const fn buffer::PlanarView<'a>::chroma_siting(&self) -> ChromaSiting [also: (root)]
 pub fn buffer::PlanarView<'a>::color(&self) -> core::option::Option<&color::ColorSpace>
@@ -396,7 +398,7 @@ pub const fn buffer::PlaneBuf::row_bytes(&self) -> usize [also: (root)]
 pub fn buffer::PlaneBuf::row_mut(&mut self, u32) -> &mut [u8]
 pub fn buffer::PlaneBuf::storage(&self) -> &storage::PixelStorage
 pub const fn buffer::PlaneBuf::stride_bytes(&self) -> usize [also: (root)]
-pub fn buffer::PlaneBuf::try_make_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::try_cow_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub const fn buffer::PlaneBuf::width(&self) -> u32 [also: (root)]
 pub fn buffer::PlaneView<'a>::as_code_plane(self, usize) -> core::result::Result<CodePlane<'a>, CodePlaneError>
 pub fn buffer::PlaneView<'a>::as_code_plane_with(self, usize, sample::SampleEncoding) -> core::result::Result<CodePlane<'a>, CodePlaneError>
@@ -778,9 +780,9 @@ pub const color::Chromaticity::D65: Self
 pub const color::Chromaticity::DCI: Self
 pub const color::Chromaticity::E: Self
 pub const fn color::Chromaticity::from_s15fixed16(i32, i32) -> core::option::Option<Self> [also: (root)]
-pub const fn color::Chromaticity::from_s15fixed16_primary(i32, i32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Chromaticity::from_s15fixed16_unbounded_primary(i32, i32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::new(f32, f32) -> core::option::Option<Self> [also: (root)]
-pub const fn color::Chromaticity::new_primary(f32, f32) -> core::option::Option<Self> [also: (root)]
+pub const fn color::Chromaticity::new_unbounded_primary(f32, f32) -> core::option::Option<Self> [also: (root)]
 pub const fn color::Chromaticity::to_s15fixed16(self) -> (i32, i32) [also: (root)]
 pub const fn color::Chromaticity::x(self) -> f32 [also: (root)]
 pub const fn color::Chromaticity::xy(self) -> (f32, f32) [also: (root)]
@@ -1053,8 +1055,8 @@ pub const fn hdr::St2086Codes::from_rgb_order_be_bytes([u8; 24]) -> Self [also: 
 pub fn hdr::St2086Codes::semantic(self) -> hdr::MasteringDisplay
 pub const fn hdr::St2086Codes::to_rgb_order_be_bytes(self) -> [u8; 24] [also: (root)]
 pub mod icc
-pub icc::IccMatchTolerance::Exact
-pub icc::IccMatchTolerance::Intent
+pub icc::IccMatchTolerance::RelaxedTrc
+pub icc::IccMatchTolerance::StrictTrc
 pub icc::IccValidationError::InvalidDeclaredSize
 pub icc::IccValidationError::MissingSignature
 pub icc::IccValidationError::TagSpanOutOfBounds
@@ -1425,7 +1427,7 @@ pub const fn storage::PixelStorage::is_external(&self) -> bool [also: (root)]
 pub const fn storage::PixelStorage::is_mutable_in_place(&self) -> bool [also: (root)]
 pub fn storage::PixelStorage::truncate_bytes(&mut self, usize)
 pub fn storage::PixelStorage::try_clone(&self) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_make_bytes_mut(&mut self) -> core::result::Result<&mut [u8], storage::StorageError>
+pub fn storage::PixelStorage::try_cow_bytes_mut(&mut self) -> core::result::Result<&mut [u8], storage::StorageError>
 pub fn storage::PixelStorage::zeroed_aligned64_bytes(usize) -> core::result::Result<Self, storage::StorageError>
 pub fn storage::PixelStorage::zeroed_bytes(layout::SampleType, usize) -> core::result::Result<Self, storage::StorageError>
 pub storage::StorageError::AllocationFailed
@@ -1655,8 +1657,8 @@ pub IccColorSpace::Xyz
 pub IccColorSpace::Ycbcr
 pub fn color::IccColorSpace::from_icc(&[u8]) -> core::option::Option<Self>
 pub enum IccMatchTolerance [also: icc]
-pub IccMatchTolerance::Exact
-pub IccMatchTolerance::Intent
+pub IccMatchTolerance::RelaxedTrc
+pub IccMatchTolerance::StrictTrc
 #[non_exhaustive] pub enum IccValidationError [also: color, icc]
 pub IccValidationError::InvalidDeclaredSize
 pub IccValidationError::MissingSignature
@@ -1664,6 +1666,9 @@ pub IccValidationError::TagSpanOutOfBounds
 pub IccValidationError::TagTableOutOfBounds
 pub IccValidationError::TooShort
 pub IccValidationError::UnsupportedProfileClass
+pub enum InPlaceTransformDecision [also: buffer]
+pub InPlaceTransformDecision::Unchanged
+pub InPlaceTransformDecision::Updated(buffer::InPlaceTransformOutput)
 #[non_exhaustive] pub enum InteropTarget [also: layout]
 pub InteropTarget::DynamicImage
 pub InteropTarget::FlatSamples
@@ -1777,7 +1782,7 @@ pub fn storage::PixelStorage::into_external_mut<S: 'static>(self) -> core::resul
 pub fn storage::PixelStorage::into_sample_vec<T: storage::StorageSample>(self) -> core::result::Result<alloc::vec::Vec<T>, Self>
 pub fn storage::PixelStorage::truncate_bytes(&mut self, usize)
 pub fn storage::PixelStorage::try_clone(&self) -> core::result::Result<Self, storage::StorageError>
-pub fn storage::PixelStorage::try_make_bytes_mut(&mut self) -> core::result::Result<&mut [u8], storage::StorageError>
+pub fn storage::PixelStorage::try_cow_bytes_mut(&mut self) -> core::result::Result<&mut [u8], storage::StorageError>
 pub fn storage::PixelStorage::zeroed_aligned64_bytes(usize) -> core::result::Result<Self, storage::StorageError>
 pub fn storage::PixelStorage::zeroed_bytes(layout::SampleType, usize) -> core::result::Result<Self, storage::StorageError>
 #[non_exhaustive] pub enum PlaneRole [also: layout]
@@ -2218,9 +2223,9 @@ pub fn buffer::PixelBuf::storage(&self) -> &storage::PixelStorage
 pub fn buffer::PixelBuf::sub_rows(&self, u32, u32) -> core::result::Result<buffer::PixelView<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::sub_rows_mut(&mut self, u32, u32) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::swizzle_in_place(&mut self, layout::ChannelOrder) -> core::result::Result<(), whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::transform_in_place<F>(&mut self, F) -> core::result::Result<(), whereat::at::At<buffer::BufferError>> where F: core::ops::function::FnOnce(&mut [u8], buffer::InPlaceTransformInput<'_>) -> core::option::Option<buffer::InPlaceTransformOutput>
+pub fn buffer::PixelBuf::transform_in_place<F>(&mut self, F) -> core::result::Result<(), whereat::at::At<buffer::BufferError>> where F: core::ops::function::FnOnce(&mut [u8], buffer::InPlaceTransformInput<'_>) -> buffer::InPlaceTransformDecision
 pub fn buffer::PixelBuf::try_clone(&self) -> core::result::Result<Self, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PixelBuf::try_make_view_mut(&mut self) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PixelBuf::try_cow_view_mut(&mut self) -> core::result::Result<buffer::PixelViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PixelBuf::with_hdr(self, color::HdrMetadata) -> Self
 pub fn buffer::PixelBuf::with_origin(self, color::ColorOrigin) -> Self
 #[non_exhaustive] pub struct PixelBufParts [also: buffer]
@@ -2343,7 +2348,7 @@ pub fn buffer::PlanarBuf::as_view_mut(&mut self) -> buffer::PlanarViewMut<'_>
 pub fn buffer::PlanarBuf::crop_view(&self, layout::PixelRect) -> core::result::Result<buffer::PlanarView<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::crop_view_mut(&mut self, layout::PixelRect) -> core::result::Result<buffer::PlanarViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlanarBuf::try_as_view(&self) -> core::result::Result<buffer::PlanarView<'_>, whereat::at::At<buffer::BufferError>>
-pub fn buffer::PlanarBuf::try_make_view_mut(&mut self) -> core::result::Result<buffer::PlanarViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlanarBuf::try_cow_view_mut(&mut self) -> core::result::Result<buffer::PlanarViewMut<'_>, whereat::at::At<buffer::BufferError>>
 pub struct PlanarView<'a> [also: buffer]
 pub fn buffer::PlanarView<'a>::color(&self) -> core::option::Option<&color::ColorSpace>
 pub fn buffer::PlanarView<'a>::crop(&self, layout::PixelRect) -> core::result::Result<buffer::PlanarView<'a>, whereat::at::At<buffer::BufferError>>
@@ -2400,7 +2405,7 @@ pub fn buffer::PlaneBuf::row_as<S: storage::StorageSample>(&self, u32) -> core::
 pub fn buffer::PlaneBuf::row_as_mut<S: storage::StorageSample>(&mut self, u32) -> core::result::Result<&mut [S], whereat::at::At<buffer::BufferError>>
 pub fn buffer::PlaneBuf::row_mut(&mut self, u32) -> &mut [u8]
 pub fn buffer::PlaneBuf::storage(&self) -> &storage::PixelStorage
-pub fn buffer::PlaneBuf::try_make_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
+pub fn buffer::PlaneBuf::try_cow_view_mut(&mut self) -> core::result::Result<buffer::PlaneViewMut<'_>, whereat::at::At<buffer::BufferError>>
 #[non_exhaustive] pub struct PlaneFormat [also: layout]
 pub PlaneFormat::components: u8
 pub PlaneFormat::packing: layout::BitPacking
@@ -2535,7 +2540,7 @@ pub const fn narrow_range_grid_nests(u8, u8) -> bool
 pub const fn transfer_characteristics_name(u8) -> core::option::Option<&'static str>
 pub fn validate_icc_structure(&[u8]) -> core::result::Result<(), color::IccValidationError> [also: color, icc]
 
-## trait impls (129 types)
+## trait impls (130 types)
 
 &[T]: storage::ByteStorage
 &mut [T]: storage::ByteStorage, storage::ByteStorageMut
@@ -2565,6 +2570,7 @@ buffer::BufferError: Clone, Copy, Debug, Display, Eq, Error, From<color::ColorEr
 buffer::DualLayerHdrBuf: Clone, Debug
 buffer::DualLayerHdrBufParts: Clone, Debug
 buffer::DualLayerHdrView<'a>: Clone, Debug
+buffer::InPlaceTransformDecision: Clone, Debug
 buffer::InPlaceTransformInput<'a>: Clone, Copy, Debug
 buffer::InPlaceTransformOutput: Clone, Debug
 buffer::PixelBuf: Clone, Debug, buffer::PixelSink, buffer::PixelSource

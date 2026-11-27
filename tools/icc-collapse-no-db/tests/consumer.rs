@@ -43,19 +43,19 @@ fn c05_no_db_synthesis_distinguishes_compact_db_only_and_intrinsically_unsupport
     //    MUST return CmsUnsupported even without icc-db (never IccDbDisabled)!
     assert_eq!(
         SynthesizedIcc::for_cicp(Cicp::new(10, 8, 0, true)),
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     );
     assert_eq!(
         SynthesizedIcc::for_cicp(Cicp::BT2100_HLG_YCBCR_FULL),
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     );
     assert_eq!(
         SynthesizedIcc::for_cicp(Cicp::new(1, 255, 0, true)),
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     );
     assert_eq!(
         SynthesizedIcc::for_cicp(Cicp::new(99, 13, 0, true)),
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     );
 
     // 5. Gray without icc-db: sRGB -> NotNeeded; assigned DB-only -> IccDbDisabled; reserved -> CmsUnsupported!
@@ -73,11 +73,11 @@ fn c05_no_db_synthesis_distinguishes_compact_db_only_and_intrinsically_unsupport
     );
     assert_eq!(
         SynthesizedIcc::for_gray_cicp(Cicp::new(1, 255, 0, true)),
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     );
     assert_eq!(
         SynthesizedIcc::for_gray_cicp(Cicp::BT2100_HLG_YCBCR_FULL),
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     );
 }
 
@@ -115,7 +115,7 @@ fn c03_load_bearing_reduction_without_icc_db_preserves_icc_and_drops_opaque_alph
     ));
 
     let mut buf = PixelBuf::from_bytes(row.repeat(2), 2, 2, p3_rgba).unwrap();
-    assert!(compact_in_place(&mut buf, AlphaCompaction::DropUnusedLanes).unwrap());
+    assert!(compact_in_place(&mut buf, AlphaCompaction::DropUnusedLanes).unwrap().is_compacted());
     assert_eq!(buf.format().layout, SampleLayout::RGB8);
     assert_eq!(buf.as_view().row(0), &[64, 64, 64, 128, 128, 128]);
     assert_eq!(buf.as_view().row(1), &[64, 64, 64, 128, 128, 128]);

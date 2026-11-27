@@ -1042,11 +1042,13 @@ pub enum RowAlign {
     /// Tightly packed rows (`stride == width * bytes_per_pixel`).
     #[default]
     Tight,
-    /// 64-byte row alignment (widest SIMD vector & cache line), with a +64 B
-    /// anti-aliasing bump when the aligned stride is a nonzero multiple of 4096 bytes.
+    /// 64-byte row alignment (widest SIMD vector & cache line), with a `+64 B`
+    /// cache-set anti-aliasing bump whenever the rounded stride is a nonzero multiple of
+    /// `4096` bytes (4 KiB, preventing L1 cache-set thrashing on vertical stencils/transposes).
     Cache64,
-    /// Whole-pixel 64-byte alignment (`lcm(bytes_per_pixel, 64)`), plus one step
-    /// on 4096-byte multiples so whole-pixel stride consumers like `imgref` stay aligned.
+    /// Whole-pixel 64-byte alignment (`lcm(bytes_per_pixel, 64)`), plus one alignment step
+    /// whenever the rounded stride is a nonzero multiple of `4096` bytes so whole-pixel
+    /// stride consumers like `imgref` stay aligned without 4 KiB set aliasing.
     PixelCache64,
     /// Align row stride to a multiple of `N` samples (`0` treated as `1`).
     Samples(u16),

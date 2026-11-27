@@ -224,14 +224,15 @@ pub enum SynthesizedIcc {
     /// Note that enabling a transform backend (`cms-moxcms` / `cms-lcms`) does **not**
     /// synthesize export bytes here — enable the `icc-db` feature to serve the full grid.
     /// Unassigned / reserved code points, CIE XYZ RGB (`CP=10`), and HLG (`TC=18`)
-    /// always return [`CmsUnsupported`](Self::CmsUnsupported) regardless of `icc-db`.
+    /// always return [`Unsupported`](Self::Unsupported) regardless of `icc-db`.
     #[doc(alias = "NeedsCms")]
     IccDbDisabled,
     /// This export path cannot supply a qualified profile for the CICP.
-    /// This includes unsupported code points and HLG without a rendering target.
-    /// Preserve native CICP where the container permits it; an ICC-only caller
-    /// must report the limitation or explicitly convert to a supported output.
-    CmsUnsupported,
+    /// This includes unsupported/reserved code points, CIE XYZ RGB (`CP=10`), and HLG
+    /// without a rendering target. Preserve native CICP where the container permits it;
+    /// an ICC-only caller must report the limitation or explicitly convert to a supported output.
+    #[doc(alias = "CmsUnsupported")]
+    Unsupported,
 }
 
 impl SynthesizedIcc {
@@ -243,7 +244,7 @@ impl SynthesizedIcc {
     /// the matrix and expanded range. It must not be attached to raw YCbCr or
     /// limited-range code values as though synthesis had converted them.
     /// See the variants and precision caveats for supported combinations.
-    /// HLG returns [`CmsUnsupported`](Self::CmsUnsupported) without a rendering target.
+    /// HLG returns [`Unsupported`](Self::Unsupported) without a rendering target.
     #[must_use]
     pub fn for_cicp(cicp: Cicp) -> Self {
         synthesize_icc_for_cicp(cicp)
@@ -263,7 +264,7 @@ impl SynthesizedIcc {
 /// transfer), returning a [`SynthesizedIcc`] that says exactly what happened.
 ///
 /// Resolve primaries and transfer together. Reserved/unsupported code points
-/// return [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported). HLG also refuses:
+/// return [`Unsupported`](SynthesizedIcc::Unsupported). HLG also refuses:
 /// CICP alone provides no rendering target for its full RGB OOTF. Preserve native
 /// CICP where permitted; ICC-only output requires an explicit supported choice.
 ///
@@ -303,7 +304,7 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     // CICP alone does not supply the target display/OOTF. A fixed neutral
     // gamma is not a faithful substitute for a complete HLG RGB transform.
     if cicp.transfer_characteristics == 18 {
-        return SynthesizedIcc::CmsUnsupported;
+        return SynthesizedIcc::Unsupported;
     }
     // sRGB / unspecified defaults need no embedded ICC. BT.709 transfer
     // with specified BT.709 primaries (1,1) is a different curve from sRGB.
@@ -329,7 +330,7 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         || !is_assigned_primaries(cicp.color_primaries)
         || !is_assigned_transfer(cicp.transfer_characteristics)
     {
-        return SynthesizedIcc::CmsUnsupported;
+        return SynthesizedIcc::Unsupported;
     }
 
     // Stored export bytes are keyed on raw code points, independent of the
@@ -345,7 +346,7 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 
         // The supported table has no entry. Transform backends are separate
         // from export synthesis and cannot silently invent a replacement here.
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     }
     // Without the database: a curated const whose curve is exactly the
     // requested transfer, else IccDbDisabled ("enable `icc-db`") for eligible assigned pairs.
@@ -378,11 +379,11 @@ pub(crate) fn synthesize_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 /// After HLG refusal, 164 non-default gray pairs remain eligible with `icc-db`.
 /// Primaries 10 is valid here because only its equal-energy white is needed.
 /// Without `icc-db`, eligible assigned pairs return [`IccDbDisabled`](SynthesizedIcc::IccDbDisabled);
-/// unassigned/reserved codes and HLG return [`CmsUnsupported`](SynthesizedIcc::CmsUnsupported)
+/// unassigned/reserved codes and HLG return [`CmsUnsupported`](SynthesizedIcc::Unsupported)
 /// in every build.
 pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
     if cicp.transfer_characteristics == 18 {
-        return SynthesizedIcc::CmsUnsupported;
+        return SynthesizedIcc::Unsupported;
     }
     // Same raw-code-point default gate as the RGB variant (see its comment
     // for why the enum mapping must not be used here).
@@ -400,7 +401,7 @@ pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
         cicp.color_primaries
     };
     if !is_assigned_primaries(eff_cp) || !is_assigned_transfer(cicp.transfer_characteristics) {
-        return SynthesizedIcc::CmsUnsupported;
+        return SynthesizedIcc::Unsupported;
     }
 
     // The bundle's gray table covers the full assigned grid (`icc-db`);
@@ -416,7 +417,7 @@ pub(crate) fn synthesize_gray_icc_for_cicp(cicp: Cicp) -> SynthesizedIcc {
 
         // Outside the assigned grid — same terminal state as the RGB
         // variant.
-        SynthesizedIcc::CmsUnsupported
+        SynthesizedIcc::Unsupported
     }
     #[cfg(not(feature = "icc-db"))]
     {
@@ -755,7 +756,7 @@ mod tests {
         let bt2020_reserved_trc = Cicp::new(9, 0, 9, false);
         assert_eq!(
             synthesize_icc_for_cicp(bt2020_reserved_trc),
-            SynthesizedIcc::CmsUnsupported
+            SynthesizedIcc::Unsupported
         );
     }
 
@@ -815,7 +816,7 @@ mod tests {
                         assert!(p == 1 && t == 13, "({p}, {t}) unexpectedly NotNeeded");
                         not_needed += 1;
                     }
-                    SynthesizedIcc::CmsUnsupported if p == 10 || t == 18 => unsupported += 1,
+                    SynthesizedIcc::Unsupported if p == 10 || t == 18 => unsupported += 1,
                     other => panic!("({p}, {t}) gave {other:?} — expected full blob coverage"),
                 }
             }

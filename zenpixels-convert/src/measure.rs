@@ -39,11 +39,11 @@ pub struct LightLevelHistogram {
 }
 
 impl LightLevelHistogram {
-    /// Lower bin edge in cd/m².
+    /// Lower bin edge (`0.005` cd/m²).
     pub const BIN_MIN_NITS: f32 = 0.005;
-    /// Upper bin edge in cd/m² (ST 2084 PQ peak).
+    /// Upper bin edge (`10_000.0` cd/m², ST 2084 PQ peak).
     pub const BIN_MAX_NITS: f32 = 10_000.0;
-    /// Number of log2-spaced bins (~0.02 stops per bin).
+    /// Number of log2-spaced bins (`1024`, ~0.02 stops per bin).
     pub const NUM_BINS: usize = 1024;
 
     const LOG2_MIN: f32 = -7.643_856;

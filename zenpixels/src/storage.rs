@@ -696,8 +696,9 @@ impl PixelStorage {
     /// `Err(StorageError::AllocationFailed)` only on OOM during copy-on-write promotion.
     /// Strictly zero-copy and infallible for native `Vec`, `Aligned64`, and `ExternalMut`.
     #[doc(alias = "try_as_bytes_mut")]
+    #[doc(alias = "try_make_bytes_mut")]
     #[doc(alias = "cow")]
-    pub fn try_make_bytes_mut(&mut self) -> Result<&mut [u8], StorageError> {
+    pub fn try_cow_bytes_mut(&mut self) -> Result<&mut [u8], StorageError> {
         if let Self::External(ext) = self {
             let src = ext.as_bytes();
             let mut aligned = AlignedSamples::zeroed_bytes(src.len())?;
@@ -1036,7 +1037,7 @@ impl ByteStorage for PixelStorage {
 impl ByteStorageMut for PixelStorage {
     #[inline]
     fn as_bytes_mut(&mut self) -> &mut [u8] {
-        self.try_make_bytes_mut()
+        self.try_cow_bytes_mut()
             .expect("copy-on-write promotion of external PixelStorage failed")
     }
 }

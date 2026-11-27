@@ -307,13 +307,15 @@ pub struct IccIdentification {
     pub valid_use: IdentificationUse,
 }
 
-/// Tolerance tier for [`IccIdentification::from_icc_for_intent`].
+/// TRC matching tolerance tier for [`IccIdentification::from_icc_for_intent`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IccMatchTolerance {
-    /// Strict ±1 `u16` TRC tolerance (parametric v4 profiles).
-    Exact,
-    /// Intent-aware tolerance (±56 `u16` TRC tolerance for safe matrix+TRC substitution).
-    Intent,
+    /// Strict ±1 `u16` TRC tolerance (exact parametric v4 profiles).
+    #[doc(alias = "Exact")]
+    StrictTrc,
+    /// Relaxed ±56 `u16` TRC tolerance for safe matrix+TRC substitution across legacy LUT TRCs.
+    #[doc(alias = "Intent")]
+    RelaxedTrc,
 }
 
 /// Pair of normalized ICC fingerprints returned by [`normalized_hash`].
@@ -406,8 +408,8 @@ impl IccIdentification {
             crate::RenderingIntent::AbsoluteColorimetric => CoalesceForUse::AbsoluteColorimetric,
         };
         let tol = match tolerance {
-            IccMatchTolerance::Exact => Tolerance::Exact,
-            IccMatchTolerance::Intent => Tolerance::Intent,
+            IccMatchTolerance::StrictTrc => Tolerance::Exact,
+            IccMatchTolerance::RelaxedTrc => Tolerance::Intent,
         };
         identify_common_for(icc_bytes, tol, use_for)
     }

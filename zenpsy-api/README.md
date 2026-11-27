@@ -8,17 +8,17 @@ fields and exposes all named scalars through an allocation-free iterator of
 identical-pair value. No universal range or normalization is assumed.
 
 `score` checks input geometry, optional pixel admission, cancellation and returned
-score sets. Inputs are existing `PixelSlice` views: active strided rows, precision,
-colour context and HDR signalling pass through unchanged. Implementations must
+score sets. Inputs are existing `PixelView` views: active strided rows, precision,
+colour space (`ColorSpace` / `ColorOrigin`) and HDR signalling pass through unchanged. Implementations must
 reject unsupported interpretations; the contract does not convert pixels.
 Packed traits remain unchanged. Optional `PlanarMetric` and
-`PreparePlanarReference` accept the shared `zenpixels::plane::PlanarSlice`:
-borrowed standard planes/layout, explicit color/luminance and alpha, without
+`PreparePlanarReference` accept the shared `zenpixels::PlanarView`:
+borrowed standard planes/format, explicit color/luminance and alpha, without
 packing or copying samples. Checked prepared calls bind that interpretation;
 independent candidate strides are preserved.
 
 Planar ingress uses the same `SampleEncoding`, `CodePlane` component readers,
-`PlanarLayout` and `ColorContext` as the current pixel contracts. Storage facts
+`PlaneFormat` and `ColorSpace` as the current pixel contracts. Storage facts
 are not conversion support: a signed/wide integer encoding is representable
 without promising a matching native plane reader or metric implementation.
 Code depth/placement, native matrix/range, chroma siting, unknown codes and ICC
@@ -62,7 +62,7 @@ The unpublished field/privacy and checked-grid changes require caller updates.
 Diagnostics are off by default. `EvalOpts::with_native_map` explicitly requests
 native diagnostic data in the concrete result; `with_map(key)` additionally
 requires that exact common map or returns `NoMap`; callers must bound witnesses and
-storage. `Evaluation::maps()` exposes borrowed `MapView`s: existing zenpixels `AnyPlane`
+storage. `Evaluation::maps()` exposes borrowed `MapView`s: existing zenpixels `PlaneView`
 views, native `ScoreSpec` semantics and a regular `MapGrid` in input coordinates.
 Typed and erased results keep the original sample allocations, precision and
 strides. Undefined map samples remain unchanged. Grid placement describes where

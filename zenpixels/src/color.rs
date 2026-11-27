@@ -52,9 +52,9 @@ impl Chromaticity {
     /// Validate and construct a physical CIE 1931 `(x, y)` chromaticity coordinate
     /// (`x > 0`, `y > 0`, `x + y < 1`, finite — guarantees strictly positive `X, Y, Z`).
     ///
-    /// Use [`new_primary`](Self::new_primary) for boundary or virtual/imaginary RGB
-    /// primaries such as CIE XYZ (`R = (1, 0), B = (0, 0)`) and ACES2065-1 AP0
-    /// (`G = (0, 1)`, `B = (0.0001, -0.0770)`).
+    /// Use [`new_unbounded_primary`](Self::new_unbounded_primary) for boundary or
+    /// virtual/imaginary RGB primaries such as CIE XYZ (`R = (1, 0), B = (0, 0)`) and
+    /// ACES2065-1 AP0 (`G = (0, 1)`, `B = (0.0001, -0.0770)`).
     #[inline]
     #[must_use]
     pub const fn new(x: f32, y: f32) -> Option<Self> {
@@ -64,15 +64,17 @@ impl Chromaticity {
         Some(Self { x, y })
     }
 
-    /// Validate and construct an RGB primary coordinate, permitting boundary (`y == 0` such as
-    /// CIE XYZ `R = (1, 0), B = (0, 0)`) and imaginary primaries such as ACES2065-1 AP0
+    /// Validate and construct an unbounded RGB primary coordinate, permitting boundary
+    /// (`y == 0`, such as CIE XYZ `R = (1, 0), B = (0, 0)`) and virtual/imaginary primaries
+    /// outside the physical chromaticity triangle such as ACES2065-1 AP0
     /// (`G = (0.0, 1.0)`, `B = (0.0001, -0.0770)`) and ProPhoto RGB (`x + y = 1.0`).
     ///
     /// Requires finite coordinates with `|x|, |y| <= 4.0`. Non-singularity of the resulting
     /// projective RGB → XYZ matrix is verified by [`CustomPrimaries::new`].
     #[inline]
     #[must_use]
-    pub const fn new_primary(x: f32, y: f32) -> Option<Self> {
+    #[doc(alias = "new_primary")]
+    pub const fn new_unbounded_primary(x: f32, y: f32) -> Option<Self> {
         if !x.is_finite() || !y.is_finite() || x < -4.0 || x > 4.0 || y < -4.0 || y > 4.0 {
             return None;
         }
@@ -94,12 +96,13 @@ impl Chromaticity {
         Self::new((x as f64 / 65536.0) as f32, (y as f64 / 65536.0) as f32)
     }
 
-    /// Validate and construct an RGB primary coordinate from ICC `s15Fixed16Number` values,
-    /// permitting negative or boundary chromaticities such as ACES AP0 `y_B = -0.0770`.
+    /// Validate and construct an unbounded RGB primary coordinate from ICC `s15Fixed16Number`
+    /// values, permitting negative or boundary chromaticities such as ACES AP0 `y_B = -0.0770`.
     #[inline]
     #[must_use]
-    pub const fn from_s15fixed16_primary(x: i32, y: i32) -> Option<Self> {
-        Self::new_primary((x as f64 / 65536.0) as f32, (y as f64 / 65536.0) as f32)
+    #[doc(alias = "from_s15fixed16_primary")]
+    pub const fn from_s15fixed16_unbounded_primary(x: i32, y: i32) -> Option<Self> {
+        Self::new_unbounded_primary((x as f64 / 65536.0) as f32, (y as f64 / 65536.0) as f32)
     }
 
     /// Encode this chromaticity as a pair of ICC `s15Fixed16Number` values (`round(v * 65536)`).
@@ -246,9 +249,9 @@ impl CustomPrimaries {
         white: (f32, f32),
     ) -> Option<Self> {
         let (Some(r), Some(g), Some(b), Some(white)) = (
-            Chromaticity::new_primary(r.0, r.1),
-            Chromaticity::new_primary(g.0, g.1),
-            Chromaticity::new_primary(b.0, b.1),
+            Chromaticity::new_unbounded_primary(r.0, r.1),
+            Chromaticity::new_unbounded_primary(g.0, g.1),
+            Chromaticity::new_unbounded_primary(b.0, b.1),
             Chromaticity::new(white.0, white.1),
         ) else {
             return None;
@@ -269,9 +272,9 @@ impl CustomPrimaries {
     #[must_use]
     pub const fn from_s15fixed16(coords: [i32; 8]) -> Option<Self> {
         let (Some(r), Some(g), Some(b), Some(white)) = (
-            Chromaticity::from_s15fixed16_primary(coords[0], coords[1]),
-            Chromaticity::from_s15fixed16_primary(coords[2], coords[3]),
-            Chromaticity::from_s15fixed16_primary(coords[4], coords[5]),
+            Chromaticity::from_s15fixed16_unbounded_primary(coords[0], coords[1]),
+            Chromaticity::from_s15fixed16_unbounded_primary(coords[2], coords[3]),
+            Chromaticity::from_s15fixed16_unbounded_primary(coords[4], coords[5]),
             Chromaticity::from_s15fixed16(coords[6], coords[7]),
         ) else {
             return None;

@@ -279,6 +279,7 @@ fn rgb10a2_unverified_opaque_canonicalization_and_orientation_propagation() {
             zenpixels_convert::AlphaCompaction::DropUnusedLanes,
         )
         .unwrap()
+        .is_compacted()
     );
     assert_eq!(rgba_gray.orientation(), Orientation::Rotate270);
 
@@ -1155,7 +1156,14 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     )
     .unwrap();
     let ptr_retag = b_retag.as_view().row(0).as_ptr() as usize;
-    assert!(compact_in_place(&mut b_retag, AlphaCompaction::RetagOpaque).unwrap());
+    assert_eq!(
+        compact_in_place(&mut b_retag, AlphaCompaction::RetagOpaque).unwrap(),
+        zenpixels_convert::CompactOutcome::Compacted
+    );
+    assert_eq!(
+        compact_in_place(&mut b_retag, AlphaCompaction::RetagOpaque).unwrap(),
+        zenpixels_convert::CompactOutcome::Unchanged
+    );
     assert_eq!(b_retag.format().layout, SampleLayout::RGBA8);
     assert_eq!(b_retag.format().color.alpha(), AlphaMode::Opaque);
     assert_eq!(b_retag.as_view().row(0).as_ptr() as usize, ptr_retag);
@@ -1168,7 +1176,14 @@ fn bundle_1_and_2_policy_default_to_rgb8_orient_owned_and_alpha_compaction() {
     )
     .unwrap();
     let ptr_drop = b_drop.as_view().row(0).as_ptr() as usize;
-    assert!(compact_in_place(&mut b_drop, AlphaCompaction::DropUnusedLanes).unwrap());
+    assert_eq!(
+        compact_in_place(&mut b_drop, AlphaCompaction::DropUnusedLanes).unwrap(),
+        zenpixels_convert::CompactOutcome::Compacted
+    );
+    assert_eq!(
+        compact_in_place(&mut b_drop, AlphaCompaction::DropUnusedLanes).unwrap(),
+        zenpixels_convert::CompactOutcome::Unchanged
+    );
     assert_eq!(b_drop.format(), &PixelFormat::RGB8_SRGB);
     assert_eq!(b_drop.as_view().row(0), &[10, 20, 30, 40, 50, 60]);
     assert_eq!(b_drop.as_view().row(0).as_ptr() as usize, ptr_drop);

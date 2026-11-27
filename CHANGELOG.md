@@ -49,12 +49,17 @@ See [`docs/migration-0.2-to-0.5.md`](docs/migration-0.2-to-0.5.md) for the compl
     stack footprints (`FormatCow`: 16 B, `PixelViewMut`: 64 B, `PixelView`: 80 B,
     `PlanarBuf`: 64 B, `BandedBuf`: 144 B, `PixelBuf`: 168 B), explicit `PixelRect`
     crops, `stride_bytes()` / `byte_offset()` / `height()` unit-explicit accessors,
-    `BandRowLocation`, `InPlaceTransformInput` / `InPlaceTransformOutput`,
-    `InterleavedCodeLayout`, fallible `Nits::new_positive` / `DiffuseWhite::new` /
+    `BandRowLocation`, `InPlaceTransformInput` / `InPlaceTransformOutput` /
+    `InPlaceTransformDecision`, `CompactOutcome`, `InterleavedCodeLayout`,
+    fallible `Nits::new_positive` / `DiffuseWhite::new` /
     `GainMapMetadata::sdr_to_hdr_stops` (with const `*_or_panic`),
+    `PixelBuf::try_image_srgb_default_color`, `try_cow_view_mut` / `try_cow_bytes_mut`,
+    `Chromaticity::new_unbounded_primary` / `from_s15fixed16_unbounded_primary`,
     `ExactDepth::{new_opaque, intersect_same_buffer, union_disjoint_regions}`,
-    `HlgRenderingParams`, `IccFingerprint`, `IccMatchTolerance`,
-    `Bt2446APipelineManaged`, `LinearInputChannels`, descriptive
+    `HlgRenderingParams`, `IccFingerprint`, `IccMatchTolerance::{StrictTrc, RelaxedTrc}`,
+    `SynthesizedIcc::Unsupported`, `GainMapApplier::pending_orientation`,
+    `HashInclusions::default() == PixelsAndColor`, `Bt2446APipelineManaged`,
+    `LinearInputChannels`, descriptive
     `whereat::At` context on `BufferError::IncompatibleLayout` element mismatches,
     and top-level `zenpixels_convert::{Stop, StopReason, Unstoppable}` re-exports.
   - Sound `AlphaMode::Opaque` construction and fast fill-then-retag: `BufFill::{Black, White}`,

@@ -9,12 +9,12 @@
 
 ## summary
 #
-#   inherent methods                           28
-#   trait roster entries (type × trait)        32
+#   inherent methods                           29
+#   trait roster entries (type × trait)        33
 #
 # per-module pub lines:
 #   codes                             4
-#   compact                           2
+#   compact                           3
 #   error                             1
 #   gainmap                           5
 #   icc_profiles                      1
@@ -26,13 +26,14 @@
 #   tonemap                           2
 #   ycbcr                             1
 
-## items (28 lines)
+## items (29 lines)
 
 pub fn codes::CodeMap::assert_fields_are_eq(&self)
 pub fn codes::CodeMapError::assert_fields_are_eq(&self)
 pub fn codes::CodeRole::assert_fields_are_eq(&self)
 pub fn codes::CodesError::assert_fields_are_eq(&self)
 pub fn compact::AlphaCompaction::assert_fields_are_eq(&self)
+pub fn compact::CompactOutcome::assert_fields_are_eq(&self)
 pub fn compact::CompactionReport::assert_fields_are_eq(&self)
 pub fn error::ConvertError::assert_fields_are_eq(&self)
 pub fn gainmap::GainMapDownsample::assert_fields_are_eq(&self)
@@ -57,7 +58,7 @@ pub fn tonemap::bt2446a::Bt2446APipelineManaged::assert_fields_are_eq(&self)
 pub fn tonemap::tone_mapper::Requirements::assert_fields_are_eq(&self)
 pub fn ycbcr::YcbcrMatrix::assert_fields_are_eq(&self)
 
-## trait impls (32 types)
+## trait impls (33 types)
 
 Lcms: TrivialClone
 LcmsUnoptimized: TrivialClone
@@ -67,6 +68,7 @@ codes::CodeMap: TrivialClone
 codes::CodeMapError: TrivialClone
 codes::CodeRole: TrivialClone
 compact::AlphaCompaction: TrivialClone
+compact::CompactOutcome: TrivialClone
 compact::CompactionReport: TrivialClone
 error::ConvertError: TrivialClone
 gainmap::GainMapDownsample: TrivialClone

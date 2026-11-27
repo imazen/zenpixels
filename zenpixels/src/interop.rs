@@ -1060,28 +1060,44 @@ impl PixelBuf {
         }
     }
 
-    /// Helper: construct an sRGB `ColorSpace` matching `image` 0.25's default `Cicp::SRGB` convention.
+    /// Helper: construct an sRGB [`ColorSpace`] matching `image` 0.25's default `Cicp::SRGB`
+    /// convention for standard grayscale and RGB/BGR channel orders.
+    ///
+    /// Returns `Some(...)` for `Gray`, `GrayAlpha`, `Rgb`, `Bgr`, `Rgba`, `Bgra`, `Rgbx`, and
+    /// `Bgrx` (mapping `Rgb`/`Bgr` to `AlphaMode::None`, `Rgbx`/`Bgrx` to `AlphaMode::Undefined`,
+    /// and `Rgba`/`Bgra`/`GrayAlpha` to `AlphaMode::Straight`), and `None` for non-sRGB orders
+    /// (`Cmyk`, `Generic`).
     ///
     /// Note: [`from_image_buffer`](Self::from_image_buffer) and [`from_dynamic_image`](Self::from_dynamic_image)
     /// read each buffer's declared `image::metadata::Cicp` rather than calling this helper.
     #[must_use]
-    pub const fn image_srgb_default_color(order: ChannelOrder) -> ColorSpace {
+    #[doc(alias = "image_srgb_default_color")]
+    pub const fn try_image_srgb_default_color(order: ChannelOrder) -> Option<ColorSpace> {
         match order {
-            ChannelOrder::Gray => ColorSpace::GRAY_SRGB,
-            ChannelOrder::GrayAlpha => ColorSpace::Gray {
+            ChannelOrder::Gray => Some(ColorSpace::GRAY_SRGB),
+            ChannelOrder::GrayAlpha => Some(ColorSpace::Gray {
                 transfer: Transfer::Srgb,
                 range: SignalRange::Full,
                 alpha: AlphaMode::Straight,
                 white: None,
-            },
-            ChannelOrder::Rgb => ColorSpace::Rgb {
+            }),
+            ChannelOrder::Rgb | ChannelOrder::Bgr => Some(ColorSpace::Rgb {
                 primaries: Primaries::Bt709,
                 transfer: Transfer::Srgb,
                 range: SignalRange::Full,
                 alpha: AlphaMode::None,
                 white: None,
-            },
-            _ => ColorSpace::SRGB_ALPHA,
+            }),
+            ChannelOrder::Rgba | ChannelOrder::Bgra => Some(ColorSpace::SRGB_ALPHA),
+            ChannelOrder::Rgbx | ChannelOrder::Bgrx => Some(ColorSpace::Rgb {
+                primaries: Primaries::Bt709,
+                transfer: Transfer::Srgb,
+                range: SignalRange::Full,
+                alpha: AlphaMode::Undefined,
+                white: None,
+            }),
+            ChannelOrder::Cmyk | ChannelOrder::Generic(_) => None,
+            _ => None,
         }
     }
 }

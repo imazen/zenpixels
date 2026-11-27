@@ -1225,7 +1225,8 @@ impl GainMapApplier {
     /// when constructed directly via [`GainMapApplier::new`]).
     #[inline]
     #[must_use]
-    pub const fn orientation(&self) -> Orientation {
+    #[doc(alias = "orientation")]
+    pub const fn pending_orientation(&self) -> Orientation {
         self.orientation
     }
 
@@ -1847,10 +1848,11 @@ fn apply_gain_map_stored(
 /// [`DualLayerHdrView`] according to `config.orientation`:
 ///
 /// - [`GainMapOrientation::Bake`] (default): reconstructs in stored coordinates, then
-///   physically applies `dual.orientation()`, returning `(display_buf, Orientation::Identity)`.
+///   physically applies `dual.orientation()`, returning `(display_buf, Orientation::Identity)`
+///   with `display_buf.orientation() == Orientation::Identity`.
 /// - [`GainMapOrientation::Passthrough`]: reconstructs in stored coordinates with zero
-///   transpose cost, returning `(stored_buf, dual.orientation())` for EXIF passthrough or
-///   GPU UV rotation.
+///   transpose cost, returning `(stored_buf, dual.orientation())` with
+///   `stored_buf.orientation() == dual.orientation()` for EXIF passthrough or GPU UV rotation.
 /// - [`GainMapOrientation::RequireIdentity`]: returns `Err(ConvertError::UnsupportedRoute)`
 ///   if `dual.orientation() != Orientation::Identity`.
 #[inline]

@@ -17,9 +17,9 @@
 use alloc::sync::Arc;
 use whereat::At;
 use zenpixels::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, InPlaceTransformOutput, PixelBuf,
-    PixelFormat, PixelView, Primaries, SampleFacts, SampleLayout, SampleType, SignalRange,
-    Transfer,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, InPlaceTransformDecision,
+    InPlaceTransformOutput, PixelBuf, PixelFormat, PixelView, Primaries, SampleFacts, SampleLayout,
+    SampleType, SignalRange, Transfer,
 };
 
 use crate::error::{ConvertError, err_at};
@@ -461,6 +461,24 @@ pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<Conve
     ))
 }
 
+/// Outcome of [`compact_in_place`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CompactOutcome {
+    /// At least one metadata retag or in-place layout compaction occurred.
+    Compacted,
+    /// The buffer was already minimal for the requested [`AlphaCompaction`] policy.
+    Unchanged,
+}
+
+impl CompactOutcome {
+    /// Returns `true` if `self == CompactOutcome::Compacted`.
+    #[inline]
+    #[must_use]
+    pub const fn is_compacted(self) -> bool {
+        matches!(self, Self::Compacted)
+    }
+}
+
 /// Analyze and compact `buf` **in place** without reallocating owned mutable storage
 /// (copy-on-write promotes immutable external storage, propagating allocation errors instead
 /// of swallowing them).
@@ -470,16 +488,17 @@ pub fn compact_to_buf(view: &PixelView<'_>) -> Result<Option<PixelBuf>, At<Conve
 /// ([`AlphaCompaction::RetagOpaque`]) or physically dropped in place
 /// ([`AlphaCompaction::DropUnusedLanes`]).
 ///
-/// Returns `Ok(true)` if any metadata or layout compaction occurred, `Ok(false)` if `buf`
-/// was already minimal, or `Err(ConvertError::Buffer(_))` on CoW allocation failure.
+/// Returns `Ok(CompactOutcome::Compacted)` if any metadata or layout compaction occurred,
+/// `Ok(CompactOutcome::Unchanged)` if `buf` was already minimal, or
+/// `Err(ConvertError::Buffer(_))` on CoW allocation failure.
 #[doc(alias = "load_bearing")]
 #[doc(alias = "shrink")]
 pub fn compact_in_place(
     buf: &mut PixelBuf,
     alpha_strategy: AlphaCompaction,
-) -> Result<bool, At<ConvertError>> {
+) -> Result<CompactOutcome, At<ConvertError>> {
     let drop_alpha_lanes = alpha_strategy == AlphaCompaction::DropUnusedLanes;
-    let mut compacted = false;
+    let mut outcome = CompactOutcome::Unchanged;
     buf.transform_in_place(|bytes, input| {
         let width = input.width;
         let rows = input.height;
@@ -487,10 +506,12 @@ pub fn compact_in_place(
         let src = input.format;
         let orig = input.origin;
         if width == 0 || rows == 0 || !src.layout.packing.is_full() {
-            return None;
+            return InPlaceTransformDecision::Unchanged;
         }
         let mut report = {
-            let view = PixelView::new(bytes, width, rows, in_stride, src).ok()?;
+            let Ok(view) = PixelView::new(bytes, width, rows, in_stride, src) else {
+                return InPlaceTransformDecision::Unchanged;
+            };
             analyze_compaction(&view)
         };
         let plan = plan_chroma_collapse(src);
@@ -514,7 +535,7 @@ pub fn compact_in_place(
         }
 
         if &target == src {
-            return None;
+            return InPlaceTransformDecision::Unchanged;
         }
 
         // Equal-bpp target: metadata-only alpha retag (0 data movement).
@@ -527,8 +548,8 @@ pub fn compact_in_place(
                 facts.all_opaque = true;
                 facts.binary_alpha = true;
             }
-            compacted = true;
-            return Some(InPlaceTransformOutput {
+            outcome = CompactOutcome::Compacted;
+            return InPlaceTransformDecision::Updated(InPlaceTransformOutput {
                 stride_bytes: in_stride,
                 format: retagged,
                 origin: orig.clone(),
@@ -536,12 +557,14 @@ pub fn compact_in_place(
             });
         }
         if out_bpp > in_bpp {
-            return None;
+            return InPlaceTransformDecision::Unchanged;
         }
 
         let narrow16 =
             src.layout.sample == SampleType::U16 && target.layout.sample == SampleType::U8;
-        let map = selection_map(src.layout.order, target.layout.order)?;
+        let Some(map) = selection_map(src.layout.order, target.layout.order) else {
+            return InPlaceTransformDecision::Unchanged;
+        };
         let out_stride = (width as usize) * out_bpp;
 
         compact_rows_in_place(
@@ -557,8 +580,8 @@ pub fn compact_in_place(
             narrow16,
         );
 
-        compacted = true;
-        Some(InPlaceTransformOutput {
+        outcome = CompactOutcome::Compacted;
+        InPlaceTransformDecision::Updated(InPlaceTransformOutput {
             stride_bytes: out_stride,
             format: target,
             origin: orig.clone(),
@@ -566,7 +589,7 @@ pub fn compact_in_place(
         })
     })
     .map_err(|e| err_at((*e.error()).into()))?;
-    Ok(compacted)
+    Ok(outcome)
 }
 
 // ── Row helpers & byte-exact compaction kernels ────────────────────────

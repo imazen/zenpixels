@@ -91,7 +91,7 @@ Not every fallible API returns `whereat::At<E>`. The boundary is consistent:
    - `from_bytes_recover`, `from_typed_recover`, `from_parts_recover`, `from_external`, `from_external_mut` return `Result<PixelBuf, (At<BufferError>, OriginalInput)>`.
    - Zero-copy extractors (`into_vec_zero_copy`, `into_external`, `into_external_mut`, `into_imgvec_zero_copy`) return `Result<T, Self>` (returning the untouched `PixelBuf` on mismatch).
 
-**Naming rule for `try_`:** Standalone fallible methods use ordinary names (`from_typed`, `from_bytes`, `into_tight_rows`, `into_vec_zero_copy`, `make_mut`, `merge`, `project_cicp`). The `try_` prefix appears **only** when the same type already has a direct value-returning twin (`try_clone`/`clone`, `try_make_view_mut`/`as_view_mut`, `try_with_*`/`with_*`, `Cicp::try_from_bytes`/`Cicp::from_bytes_lenient`).
+**Naming rule for `try_`:** Standalone fallible methods use ordinary names (`from_typed`, `from_bytes`, `into_tight_rows`, `into_vec_zero_copy`, `make_mut`, `merge`, `project_cicp`). The `try_` prefix appears **only** when the same type already has a direct value-returning twin or returns `Option` for partial domain inputs (`try_clone`/`clone`, `try_cow_view_mut`/`as_view_mut`, `try_with_*`/`with_*`, `try_image_srgb_default_color`, `Cicp::try_from_bytes`/`Cicp::from_bytes_lenient`).
 
 ---
 
@@ -158,7 +158,7 @@ assert_eq!(tile.stride_bytes(), 24);
 assert_eq!(tile.row(0).len(), 4 * 3);
 
 // Fallible CoW mutation promotes `buf` to owned storage without touching `shared`:
-buf.try_make_view_mut()?.row_mut(0)[0] = 99;
+buf.try_cow_view_mut()?.row_mut(0)[0] = 99;
 assert_eq!(buf.row(0)[0], 99);
 // Mutable crops (`crop_view_mut` / `sub_rows_mut`) also promote fallibly on CoW;
 // `buf.into_crop(PixelRect::new(x, y, w, h))?` crops an owned `PixelBuf` in O(1) without copying pixels
@@ -479,6 +479,10 @@ ImagePlan::build(src.format(), dst.format(), &ConvertPolicy::permissive(), PeakS
 
 let rotated = apply_orientation_banded(&src, Orientation::Rotate90, BandSizing::MaxBandBytes(48))?;
 assert_eq!((rotated.width(), rotated.height()), (6, 8));
+
+// Materialize back to a single contiguous PixelBuf when needed (zero-copy if 1 band):
+let flat = rotated.into_buf()?;
+assert_eq!((flat.width(), flat.height()), (6, 8));
 ```
 
 ---
@@ -552,7 +556,8 @@ Inspect actual pixel data to find whether alpha, chroma, or full U16 precision a
 
 ```rust
 use zenpixels_convert::{
-    AlphaCompaction, AlphaMode, SampleLayout, analyze_compaction, compact_in_place, compact_to_buf,
+    AlphaCompaction, AlphaMode, CompactOutcome, SampleLayout, analyze_compaction, compact_in_place,
+    compact_to_buf,
 };
 
 // Inspect & allocating compaction (e.g. neutral opaque RGBA16 -> GRAY8):
@@ -565,12 +570,14 @@ assert_eq!(compact.format().layout, SampleLayout::GRAY8);
 
 // Zero-reallocation in-place compaction on opaque RGBA8:
 // 1. Retag alpha to AlphaMode::Opaque without shifting lanes:
-compact_in_place(&mut rgba8_opaque, AlphaCompaction::RetagOpaque)?;
+let outcome = compact_in_place(&mut rgba8_opaque, AlphaCompaction::RetagOpaque)?;
+assert_eq!(outcome, CompactOutcome::Compacted);
 assert_eq!(rgba8_opaque.format().color.alpha(), AlphaMode::Opaque);
 assert_eq!(rgba8_opaque.format().layout, SampleLayout::RGBA8);
 
 // 2. Physically drop unused alpha lane in-place (reusing the same allocation):
-compact_in_place(&mut rgba8_opaque, AlphaCompaction::DropUnusedLanes)?;
+let outcome = compact_in_place(&mut rgba8_opaque, AlphaCompaction::DropUnusedLanes)?;
+assert!(outcome.is_compacted());
 assert_eq!(rgba8_opaque.format().layout, SampleLayout::RGB8);
 ```
 
@@ -591,11 +598,11 @@ let top_left = img_ref[(0usize, 0usize)];
 let owned_img = ImgVec::new(vec![top_left; 4], 2, 2);
 let back_from_imgref = PixelBuf::from_imgvec(owned_img, ColorSpace::SRGB)?;
 
-// `image` 0.25 round-trip (propagates CICP color space automatically; use
-// `from_dynamic_image_with_color` / `from_rgb8_image_with_color` / `from_rgba8_image_with_color`
-// to attach an explicit ColorSpace):
+// `image` 0.25 round-trip (propagates CICP color space automatically):
 let dyn_img = buf.into_dynamic_image()?;
-let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
+let back_from_image = PixelBuf::from_dynamic_image(dyn_img.clone())?;
+// Or attach an explicit ColorSpace (e.g. Display P3):
+let p3_from_image = PixelBuf::from_dynamic_image_with_color(dyn_img, ColorSpace::DISPLAY_P3)?;
 ```
 
 ---
@@ -620,4 +627,4 @@ let back_from_image = PixelBuf::from_dynamic_image(dyn_img)?;
 | **`PeakSource`** | How HDR→SDR tone mapping obtains source peak luminance on whole-image plans: `Measured` (streaming O(1) scan when needed), `Declared` (`MaxCLL` / `MasteringDisplay`), or `Fixed(Nits)`. |
 | **`HlgMode`** | Distinguishes `HlgMode::Scene` (scene-referred ARIB STD-B67, representable in 4-byte CICP) from `HlgMode::Display(HlgRendering)` (BT.2100 display-rendered at e.g. `1000` nits; cannot be carried by CICP alone). |
 | **`FormatCow<'a>`** | Borrow-or-share `PixelFormat` wrapper inside views (`Borrowed(&'a PixelFormat)` for 0-alloc views vs `Owned(Arc<PixelFormat>)` for dynamic specs). |
-| **`try_make_view_mut` / `make_mut`** | Fallible copy-on-write (CoW) promotion for `PixelBuf` / `PlaneBuf` / `PlanarBuf` backed by immutable external storage (`Arc<[u8]>`, `&'static [u8]`, FFI pools). |
+| **`try_cow_view_mut` / `make_mut`** | Fallible copy-on-write (CoW) promotion for `PixelBuf` / `PlaneBuf` / `PlanarBuf` backed by immutable external storage (`Arc<[u8]>`, `&'static [u8]`, FFI pools). |

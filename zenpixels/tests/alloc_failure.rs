@@ -143,7 +143,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
     let err = with_oom_above(4096, || padded_ext.into_tight_rows()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
 
-    // PlaneBuf::from_external CoW promotion (`try_make_view_mut`) on OOM leaves plane intact!
+    // PlaneBuf::from_external CoW promotion (`try_cow_view_mut`) on OOM leaves plane intact!
     let mut ext_plane = PlaneBuf::from_external(
         std::sync::Arc::<[u8]>::from(vec![0x33u8; 128 * 64].into_boxed_slice()),
         128,
@@ -152,7 +152,7 @@ fn constructors_and_copies_return_allocation_failed_on_oom() {
         PlaneFormat::new(PlaneRole::Y, SampleType::U8),
     )
     .unwrap();
-    let err = with_oom_above(4096, || ext_plane.try_make_view_mut()).unwrap_err();
+    let err = with_oom_above(4096, || ext_plane.try_cow_view_mut()).unwrap_err();
     assert_eq!(*err.error(), BufferError::AllocationFailed);
     let err =
         with_oom_above(4096, || ext_plane.crop_view_mut(PixelRect::new(0, 0, 4, 4))).unwrap_err();

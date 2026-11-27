@@ -22,6 +22,15 @@ use crate::policy::ConvertPolicy;
 ///
 /// Selects **container signaling metadata**, not the target pixel color space (which is
 /// determined by the destination [`PixelFormat`]).
+///
+/// | Mode | CICP emitted | ICC emitted | Behavior on non-CICP / display-HLG / mismatch |
+/// |---|---|---|---|
+/// | `Auto` (default) | Standardized (`sRGB`, `DisplayP3`, `BT.2100`, etc.) | Bundled/synthesized when no CICP exists (e.g. Adobe RGB) | Refuses `HlgMode::Display` (no standard CICP) |
+/// | `SameAsOrigin` | Origin CICP if compatible | Origin ICC if compatible | Errors if destination color semantics differ from origin |
+/// | `CicpOnly` | Explicit CICP | `None` | Errors if destination has no standard CICP (e.g. Adobe RGB, custom ICC, display-HLG) |
+/// | `EmbedIcc` | `None` | Synthesized / bundled / origin ICC (`None` for sRGB default) | Errors on unsupported ICC synthesis (e.g. HLG, XYZ) |
+/// | `CustomIcc(bytes)` | `None` | Exact caller bytes | Validates basic ICC header structure |
+/// | `Strip` | `None` | `None` | Emits no tags without modifying pixels |
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OutputSignaling {

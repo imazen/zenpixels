@@ -1368,9 +1368,11 @@ pub fn convert_into_with_peak<S: PixelSource + ?Sized, D: PixelSink + ?Sized>(
 /// One-shot convenience helper: convert `src` to full-range sRGB `RGB8` under
 /// `ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`.
 ///
-/// Refuses dropping unproven non-opaque alpha (`ConvertError::AlphaLossForbidden`);
-/// use [`convert_to_buf`] with [`AlphaPolicy::CompositeOnto`] or [`AlphaPolicy::DiscardUnchecked`]
-/// to flatten or drop live transparency explicitly.
+/// `DiscardIfOpaque` is a **metadata-only** check (`AlphaMode::None`, `AlphaMode::Opaque`,
+/// `AlphaMode::Undefined`, or `src.facts().all_opaque == true`) — it does **not** scan pixels.
+/// For straight-alpha buffers whose pixels happen to be opaque, run [`scan_facts`](crate::scan_facts)
+/// first (or pass [`AlphaPolicy::CompositeOnto`] / [`AlphaPolicy::DiscardUnchecked`] to
+/// [`convert_to_buf`]).
 #[doc(alias = "to_rgb8")]
 pub fn to_rgb8_if_opaque(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
@@ -1390,9 +1392,11 @@ pub fn to_rgba8(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
 /// One-shot convenience helper: convert `src` to full-range sRGB `GRAY8` (encoded Y' luma
 /// by default) under `ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque)`.
 ///
-/// Refuses dropping unproven non-opaque alpha (`ConvertError::AlphaLossForbidden`);
-/// use [`convert_to_buf`] with [`AlphaPolicy::CompositeOnto`] or [`AlphaPolicy::DiscardUnchecked`]
-/// to flatten or drop live transparency explicitly.
+/// `DiscardIfOpaque` is a **metadata-only** check (`AlphaMode::None`, `AlphaMode::Opaque`,
+/// `AlphaMode::Undefined`, or `src.facts().all_opaque == true`) — it does **not** scan pixels.
+/// For straight-alpha buffers whose pixels happen to be opaque, run [`scan_facts`](crate::scan_facts)
+/// first (or pass [`AlphaPolicy::CompositeOnto`] / [`AlphaPolicy::DiscardUnchecked`] to
+/// [`convert_to_buf`]).
 #[doc(alias = "to_gray8")]
 pub fn to_gray8_if_opaque(src: &PixelView<'_>) -> Result<PixelBuf, At<ConvertError>> {
     let policy = ConvertPolicy::permissive().with_alpha(AlphaPolicy::DiscardIfOpaque);
@@ -1805,12 +1809,12 @@ pub(crate) fn try_substitute_icc(
                 return None;
             }
             // Intent-aware lookup: refuses AbsoluteColorimetric and honors per-intent safety mask.
-            // When a CMS backend is configured, require Exact (±1 u16) tolerance so approximate LUT
-            // profiles use the real CMS instead of silently bypassing it.
+            // When a CMS backend is configured, require StrictTrc (±1 u16) tolerance so approximate
+            // LUT profiles use the real CMS instead of silently bypassing it.
             let tolerance = if policy.cms.is_some() {
-                zenpixels::icc::IccMatchTolerance::Exact
+                zenpixels::icc::IccMatchTolerance::StrictTrc
             } else {
-                zenpixels::icc::IccMatchTolerance::Intent
+                zenpixels::icc::IccMatchTolerance::RelaxedTrc
             };
             let id = zenpixels::icc::IccIdentification::from_icc_for_intent(
                 profile, *intent, tolerance,

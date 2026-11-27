@@ -303,10 +303,105 @@ fn icc_from_icc_for_intent_rejects_absolute_colorimetric() {
         zenpixels::icc::IccIdentification::from_icc_for_intent(
             &fake_icc,
             RenderingIntent::AbsoluteColorimetric,
-            zenpixels::icc::IccMatchTolerance::Intent,
+            zenpixels::icc::IccMatchTolerance::RelaxedTrc,
         )
         .is_none()
     );
+}
+
+#[test]
+fn stage_d_api_clarity_regressions() {
+    use zenpixels::{
+        AlphaMode, ChannelOrder, Chromaticity, ColorOrigin, ColorSpace, InPlaceTransformDecision,
+        InPlaceTransformOutput, PixelBuf, PixelFormat, SampleFacts, SampleLayout,
+    };
+
+    // 1. `try_image_srgb_default_color` distinguishes Bgr (no alpha), Rgbx/Bgrx (Undefined),
+    //    Rgba/Bgra (Straight), Gray/GrayAlpha, and refuses Cmyk / Generic!
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Rgb)
+            .unwrap()
+            .alpha(),
+        AlphaMode::None
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Bgr)
+            .unwrap()
+            .alpha(),
+        AlphaMode::None
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Rgba)
+            .unwrap()
+            .alpha(),
+        AlphaMode::Straight
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Bgra)
+            .unwrap()
+            .alpha(),
+        AlphaMode::Straight
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Rgbx)
+            .unwrap()
+            .alpha(),
+        AlphaMode::Undefined
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Bgrx)
+            .unwrap()
+            .alpha(),
+        AlphaMode::Undefined
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Gray),
+        Some(ColorSpace::GRAY_SRGB)
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Cmyk),
+        None
+    );
+    assert_eq!(
+        PixelBuf::try_image_srgb_default_color(ChannelOrder::Generic(4)),
+        None
+    );
+
+    // 2. `InPlaceTransformDecision::{Unchanged, Updated}` contract on `PixelBuf::transform_in_place`.
+    let mut buf =
+        PixelBuf::from_typed(vec![10u8, 20, 30, 255], 1, 1, PixelFormat::RGBA8_SRGB).unwrap();
+    buf.transform_in_place(|_, _| InPlaceTransformDecision::Unchanged)
+        .unwrap();
+    assert_eq!(buf.format(), &PixelFormat::RGBA8_SRGB);
+
+    buf.transform_in_place(|bytes, input| {
+        bytes[3] = 255;
+        InPlaceTransformDecision::Updated(InPlaceTransformOutput {
+            stride_bytes: input.stride_bytes,
+            format: PixelFormat::new(
+                SampleLayout::RGBA8,
+                ColorSpace::SRGB_ALPHA.with_alpha(AlphaMode::Opaque),
+            ),
+            origin: ColorOrigin::assumed(),
+            facts: SampleFacts::NONE.with_all_opaque(true),
+        })
+    })
+    .unwrap();
+    assert_eq!(buf.format().color.alpha(), AlphaMode::Opaque);
+    assert!(buf.facts().all_opaque);
+
+    // 3. `Chromaticity::new_unbounded_primary` accepts imaginary AP0 primaries while `new` rejects them.
+    assert!(Chromaticity::new(0.0001, -0.0770).is_none());
+    assert!(Chromaticity::new_unbounded_primary(0.0001, -0.0770).is_some());
+
+    // 4. `HashInclusions::default()` is `PixelsAndColor` (facts-independent).
+    #[cfg(feature = "hash")]
+    {
+        assert_eq!(
+            zenpixels::HashInclusions::default(),
+            zenpixels::HashInclusions::PixelsAndColor
+        );
+    }
 }
 
 #[test]

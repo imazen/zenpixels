@@ -41,7 +41,7 @@ Start with a **struct or enum name** below to see how it fits into the `zenpixel
 | `PixelStorage` | `enum` | Owned backing memory behind `PixelBuf`/`PlaneBuf` (`U8`..`F64`, `F16`, `Aligned64`, `External`, `ExternalMut`) | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `PixelBufParts` | `struct` | All 10 fields of `PixelBuf` disassembled for `into_parts` / `from_parts` | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `BandedBuf` / `BandSizing` / `BandRowLocation` | `struct` / `enum` | Gigapixel-safe image split into bounded-memory horizontal `Vec<PixelBuf>` bands (`BandSizing::{MaxBandBytes, RowsPerBand}`, `locate_row -> Option<BandRowLocation>`) | [Drilldown 2](#bandedbuf-for-gigapixel-images) |
-| `InPlaceTransformInput` / `Output` | `struct` | Named input/output structs for `PixelBuf::transform_in_place` closure | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
+| `InPlaceTransformInput` / `Output` / `Decision` | `struct` / `enum` | Named input, output, and decision (`Unchanged` / `Updated`) types for `PixelBuf::transform_in_place` closure | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `PixelSource` / `PixelSink` | `trait` | Row-by-row source/sink traits implemented by `PixelBuf`, `PixelView`/`PixelViewMut`, and `BandedBuf` | [Drilldown 2](#ownership-and-borrowing-relationships) |
 | `ByteStorage` / `ByteStorageMut` | `trait` | Zero-copy external backing storage traits (`Arc<[T]>`, `Box<[T]>`, `Vec<T>`, custom FFI owners) | [Drilldown 2](#anatomy-of-pixelbuf-and-pixelstorage) |
 | `RowAlign` / `BufFill` / `InteropTarget` | `enum` | Stride alignment (`Tight`, `Cache64`, `PixelCache64`, `Samples(u16)`), initial fill (`Black`, `White`), and interop preflight | [Drilldown 2](#choosing-a-pixelbuf-constructor) |
@@ -305,7 +305,7 @@ flowchart LR
     BB["BandedBuf (Vec of PixelBuf bands)"]
 
     PB -->|"as_view() / crop_view() / sub_rows()"| PV
-    PB -->|"try_make_view_mut() / crop_view_mut() / sub_rows_mut()"| PVM
+    PB -->|"try_cow_view_mut() / crop_view_mut() / sub_rows_mut()"| PVM
     PVM -->|"as_view() / into_view()"| PV
     PV -->|"to_tight_buf() (allocates)"| PB
     PV -->|"PixelCow::Borrowed"| PCOW
@@ -385,7 +385,7 @@ let mut buf = PixelBuf::from_external(shared.clone(), 2, 2, 6, PixelFormat::RGB8
     .map_err(|(err, _orig)| err)?;
 let crop = buf.crop_view(PixelRect::new(1, 0, 1, 2))?;
 assert_eq!(crop.stride_bytes(), 6);        // Parent stride preserved; row(y) has 3 active bytes
-buf.try_make_view_mut()?.row_mut(0)[0] = 42; // CoW promotes `buf`; `shared` stays untouched
+buf.try_cow_view_mut()?.row_mut(0)[0] = 42; // CoW promotes `buf`; `shared` stays untouched
 
 // 3. Relabel metadata without changing pixel bytes:
 let p3_buf = buf.relabel_color(ColorSpace::DISPLAY_P3)?; // Same layout, new ColorSpace
@@ -754,7 +754,7 @@ let (negotiated, ready) = adapt_for_encode_parametric(
 ### Gain Maps, Compaction, and Measurement
 
 - **Gain maps (`zenpixels_convert::gainmap`):** Configure application via `GainMapApplyConfig::from_headroom_stops(stops)` or `from_display_boost_linear(boost)` (plus `.with_destination_format(...)`, `.with_orientation(...)`, `.with_resample(...)`), then run `apply_gain_map_with(&dual_view, &cfg, &Unstoppable)` or streaming `GainMapApplier::for_view(&dual_view, &cfg)` (or `GainMapApplier::new(GainMapLayer::new(...), GainMapLayer::new(...), ...)`). Extract via `GainMapExtractConfig::default()` / `::ultrahdr()` + `extract_gain_map_only`.
-- **Compaction (`zenpixels_convert::compact`):** `analyze_compaction(&view)` returns `CompactionReport { requires_alpha, requires_chroma, requires_u16_precision }`, `.candidate_format(src_format)` computes the smallest lossless target, and `compact_to_buf` / `compact_in_place` perform the reduction.
+- **Compaction (`zenpixels_convert::compact`):** `analyze_compaction(&view)` returns `CompactionReport { requires_alpha, requires_chroma, requires_u16_precision }`, `.candidate_format(src_format)` computes the smallest lossless target, and `compact_to_buf` / `compact_in_place` (returning `CompactOutcome::{Compacted, Unchanged}`) perform the reduction.
 - **HDR Measurement (`zenpixels_convert::measure`):** `measure_content_light_level`, `measure_peak`, `measure_histogram` → `LightLevelHistogram` (note: `quantile_nits(quantile)` and `to_robust_content_light_level(quantile)` expect a fraction `0.0..=1.0`, e.g. `0.9999`).
 
 ---
@@ -770,6 +770,6 @@ let (negotiated, ready) = adapt_for_encode_parametric(
 | `with_*` vs `try_with_*` on `ColorSpace`, `ParametricColor`, `PixelFormat`, `ParametricFormat` | `with_*` returns `Self` (no-op if the variant lacks that field); `try_with_*` returns `Option<Self>` (`None` if inapplicable). |
 | `LightLevelHistogram::quantile_nits(quantile)` | `quantile` is a **fraction in `0.0..=1.0`** (e.g. `0.999`), not `0.0..=100.0`. `LightLevelHistogram::new(method)` is fallible (`Result<Self, At<ConvertError>>`). |
 | `PixelView::as_strided_bytes()` vs `as_contiguous_bytes()` vs `to_contiguous_bytes()` | `as_strided_bytes()` includes row padding bytes; `as_contiguous_bytes()` returns `Option<&[u8]>` (only when tight); `to_contiguous_bytes()` returns `Result<Cow<[u8]>, _>` (copies to strip padding when strided). |
-| `PixelBuf::as_view_mut()` vs `try_make_view_mut()` | On immutable `External` storage (`Arc<[u8]>`), `as_view_mut()` promotes via CoW and **panics on OOM**; `try_make_view_mut()` returns `Result<PixelViewMut<'_>, At<BufferError>>`. |
+| `PixelBuf::as_view_mut()` vs `try_cow_view_mut()` | On immutable `External` storage (`Arc<[u8]>`), `as_view_mut()` promotes via CoW and **panics on OOM**; `try_cow_view_mut()` returns `Result<PixelViewMut<'_>, At<BufferError>>`. |
 | `ExactDepth::intersect_same_buffer` vs `union_disjoint_regions` | `intersect_same_buffer` takes the tighter depth (`min`) of two facts about the **same** buffer; `union_disjoint_regions` computes the smallest common containing grid (`lcm` / `max`) across **disjoint** strips of an image. |
 | `Nits::new_positive` / `DiffuseWhite::new` / `GainMapMetadata::sdr_to_hdr_stops` | Fallible (`Option<Self>`) when rejecting non-positive or non-finite values; const panicking constructors use explicit `_or_panic` (`Nits::new_positive_or_panic`, `DiffuseWhite::new_or_panic`). |

@@ -118,7 +118,7 @@ fn every_rgb_matrix_has_rank_and_h273_d50_colorants() {
             let result = synthesize_icc_for_cicp(Cicp::new(p, t, 0, true));
             let SynthesizedIcc::Profile(icc) = result else {
                 assert!(
-                    (p == 1 && t == 13) || (p == 10 && result == SynthesizedIcc::CmsUnsupported),
+                    (p == 1 && t == 13) || (p == 10 && result == SynthesizedIcc::Unsupported),
                     "unexpected outcome ({p},{t}): {result:?}"
                 );
                 continue;
@@ -165,7 +165,7 @@ fn every_rgb_and_gray_transfer_matches_analytic_h273() {
                     continue;
                 }
                 if kind == 0 && p == 10 {
-                    assert_eq!(result, SynthesizedIcc::CmsUnsupported);
+                    assert_eq!(result, SynthesizedIcc::Unsupported);
                     continue;
                 }
                 let SynthesizedIcc::Profile(icc) = result else {
@@ -234,7 +234,7 @@ fn xyz_primaries_are_refused_for_rgb_in_every_build() {
     for t in 0..=255 {
         assert_eq!(
             synthesize_icc_for_cicp(Cicp::new(10, t, 0, true)),
-            SynthesizedIcc::CmsUnsupported,
+            SynthesizedIcc::Unsupported,
             "transfer {t}"
         );
     }
@@ -281,13 +281,10 @@ fn gray_white_and_bradford_adaptation_are_independent_of_rgb_gamut() {
 fn hlg_synthesis_refuses_without_a_rendering_target_in_every_build() {
     for primaries in 0..=255 {
         let cicp = Cicp::new(primaries, 18, 0, true);
-        assert_eq!(
-            synthesize_icc_for_cicp(cicp),
-            SynthesizedIcc::CmsUnsupported
-        );
+        assert_eq!(synthesize_icc_for_cicp(cicp), SynthesizedIcc::Unsupported);
         assert_eq!(
             synthesize_gray_icc_for_cicp(cicp),
-            SynthesizedIcc::CmsUnsupported
+            SynthesizedIcc::Unsupported
         );
     }
 }

@@ -88,7 +88,7 @@ fn external_immutable_zero_copy_cow_and_recovery() {
     let mut arc_buf = PixelBuf::from_external(Arc::clone(&raw), 4, 3, 12, spec.clone()).unwrap();
     assert_eq!(arc_buf.as_view().as_strided_bytes().as_ptr(), ptr);
     {
-        let mut vm = arc_buf.try_make_view_mut().unwrap();
+        let mut vm = arc_buf.try_cow_view_mut().unwrap();
         vm.row_mut(1)[2] = 99;
     }
     assert!(!arc_buf.is_external());
@@ -161,7 +161,7 @@ fn external_mutable_zero_copy_in_place_write_and_recovery() {
 
     // In-place write via `as_view_mut` AND `PixelSink` writes directly into the pool lease!
     {
-        let mut vm = buf.try_make_view_mut().unwrap();
+        let mut vm = buf.try_cow_view_mut().unwrap();
         assert_eq!(vm.as_strided_bytes_mut().as_ptr(), ptr);
         vm.row_mut(0)[0..4].copy_from_slice(&[10, 20, 30, 255]);
     }
@@ -225,7 +225,7 @@ fn external_owned_plane_and_try_from_parts_recover() {
         PlaneFormat::new(PlaneRole::Cb, SampleType::U16),
     )
     .unwrap();
-    uv_plane.try_make_view_mut().unwrap().row_mut(0)[0..2].copy_from_slice(&1023u16.to_ne_bytes());
+    uv_plane.try_cow_view_mut().unwrap().row_mut(0)[0..2].copy_from_slice(&1023u16.to_ne_bytes());
     let uv_back = uv_plane.into_external_mut::<Box<[u16]>>().unwrap();
     assert_eq!(uv_back[0], 1023);
 

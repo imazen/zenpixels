@@ -105,7 +105,8 @@ pub use cms::{CmsBackend, CmsTransform};
 pub use cms::{Lcms, LcmsUnoptimized};
 pub use codes::{CodeMap, CodeMapError, CodeRole, CodesError, unpack_code_planes_into};
 pub use compact::{
-    AlphaCompaction, CompactionReport, analyze_compaction, compact_in_place, compact_to_buf,
+    AlphaCompaction, CompactOutcome, CompactionReport, analyze_compaction, compact_in_place,
+    compact_to_buf,
 };
 pub use enough::{Stop, StopReason, Unstoppable};
 pub use error::ConvertError;

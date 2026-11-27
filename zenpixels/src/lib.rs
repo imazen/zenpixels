@@ -70,10 +70,10 @@ pub mod storage;
 // Clean, flat re-exports of the core interchange surface.
 pub use buffer::{
     BandRowLocation, BandSizing, BandedBuf, Bgrx, BufFill, BufferError, DEFAULT_MAX_BAND_BYTES,
-    DualLayerHdrBuf, DualLayerHdrBufParts, DualLayerHdrView, InPlaceTransformInput,
-    InPlaceTransformOutput, PixelBuf, PixelBufParts, PixelCow, PixelSink, PixelSource, PixelView,
-    PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneBuf, PlaneView, PlaneViewMut, Rgbx,
-    TypedElement,
+    DualLayerHdrBuf, DualLayerHdrBufParts, DualLayerHdrView, InPlaceTransformDecision,
+    InPlaceTransformInput, InPlaceTransformOutput, PixelBuf, PixelBufParts, PixelCow, PixelSink,
+    PixelSource, PixelView, PixelViewMut, PlanarBuf, PlanarView, PlanarViewMut, PlaneBuf,
+    PlaneView, PlaneViewMut, Rgbx, TypedElement,
 };
 pub use cicp::{
     Cicp, CicpError, CicpProjectionError, CicpTag, MatrixCoefficients, color_primaries_name,

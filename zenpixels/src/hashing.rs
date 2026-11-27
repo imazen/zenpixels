@@ -23,6 +23,9 @@ use crate::sample::{CodePlane, CodePlaneMut};
 
 /// Fields included in a portable pixel fingerprint. Storage padding is always excluded.
 ///
+/// Defaults to [`PixelsAndColor`](Self::PixelsAndColor) so caching or scanning
+/// [`SampleFacts`] never perturbs fingerprints of otherwise identical buffers.
+///
 /// Note: [`Orientation`](crate::Orientation), [`ColorOrigin`](crate::ColorOrigin), and
 /// [`HdrMetadata`](crate::HdrMetadata) are never included in any variant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -31,9 +34,9 @@ pub enum HashInclusions {
     /// Active sample values, dimensions, and physical sample layout/packing only (no color space or facts).
     SamplesAndLayout,
     /// Everything in [`SamplesAndLayout`](Self::SamplesAndLayout), plus alpha mode and current [`ColorSpace`](crate::ColorSpace).
+    #[default]
     PixelsAndColor,
     /// Everything in [`PixelsAndColor`](Self::PixelsAndColor), plus cached [`SampleFacts`] where present.
-    #[default]
     PixelsColorAndFacts,
 }
 

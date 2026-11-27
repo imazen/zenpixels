@@ -99,6 +99,20 @@ pub enum LumaDomain {
 
 /// Cohesive conversion policy controlling precision, alpha, gamut, signal range,
 /// HDR anchors, tone mapping, CMS fallback, and SIMD acceleration.
+///
+/// ## Preset Defaults
+///
+/// | Field | `lossless()` / `default()` | `working_linear()` | `permissive()` | `display_sdr(white, peak)` |
+/// |---|---|---|---|---|
+/// | `depth` | `Forbid` | `Round` | `Round` | `Round` |
+/// | `alpha` | `Forbid` | `DiscardIfOpaque` | `DiscardUnchecked` | `CompositeOnto(BLACK)` |
+/// | `gamut` | `PreserveExtended` | `PreserveExtended` | `Clip` | `Clip` |
+/// | `range` | `Forbid` | `Convert` | `Convert` | `Convert` |
+/// | `sdr_white` | `None` | `Some(BT2408)` | `None` | `Some(white)` |
+/// | `hlg_rendering` | `None` | `None` | `None` | `Some(REFERENCE_1000_NIT)` |
+/// | `tone_map_hdr_to_sdr` | `false` | `false` | `false` | `true` |
+/// | `allow_icc_substitution` | `false` | `true` | `true` | `true` |
+/// | `allow_approximate` | `false` | `false` | `false` | `false` |
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ConvertPolicy {

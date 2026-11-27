@@ -1010,7 +1010,7 @@ fn gainmap_orientation_models_bake_passthrough_require_identity_and_dual_layer_r
 
         // Streaming applier reports pending orientation faithfully.
         let applier = GainMapApplier::for_view(&view, &cfg_pass).unwrap();
-        assert_eq!(applier.orientation(), orient);
+        assert_eq!(applier.pending_orientation(), orient);
 
         // Model B: Bake (default) -> upright display dimensions + Orientation::Identity,
         // 0-bit identical to apply_orientation(&stored_buf, orient)!

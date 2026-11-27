@@ -230,7 +230,7 @@ impl MasteringDisplay {
         }
     }
 
-    /// BT.2020 primaries with D65 white point, 10000 nits peak (HDR10 reference).
+    /// BT.2020 primaries with D65 white point, `10_000.0` cd/m² max / `0.0001` cd/m² min (HDR10 reference).
     pub const HDR10_REFERENCE: Self = Self {
         primaries_xy: [[0.708, 0.292], [0.170, 0.797], [0.131, 0.046]],
         white_point_xy: [0.3127, 0.3290],
@@ -238,7 +238,7 @@ impl MasteringDisplay {
         min_luminance: 0.0001,
     };
 
-    /// Display P3 primaries with D65 white point, 1000 nits.
+    /// Display P3 primaries with D65 white point, `1_000.0` cd/m² max / `0.0001` cd/m² min.
     pub const DISPLAY_P3_1000: Self = Self {
         primaries_xy: [[0.680, 0.320], [0.265, 0.690], [0.150, 0.060]],
         white_point_xy: [0.3127, 0.3290],

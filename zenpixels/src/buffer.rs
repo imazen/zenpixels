@@ -1560,6 +1560,15 @@ pub struct InPlaceTransformOutput {
     pub facts: SampleFacts,
 }
 
+/// Outcome returned by the closure passed to [`PixelBuf::transform_in_place`].
+#[derive(Clone, Debug)]
+pub enum InPlaceTransformDecision {
+    /// Leave the buffer's format, stride, origin, and cached facts unchanged.
+    Unchanged,
+    /// Atomically validate and adopt the new stride, format, origin, and sample facts.
+    Updated(InPlaceTransformOutput),
+}
+
 /// Decomposed parts returned by [`PixelBuf::into_parts`].
 #[derive(Debug)]
 #[non_exhaustive]
@@ -2210,7 +2219,7 @@ impl PixelBuf {
     /// `Err((err, storage))` with zero heap allocation and `storage` completely untouched.
     ///
     /// Read access (`as_view`, `row`, `PixelSource`) is strictly zero-copy. Requesting
-    /// mutable access (`as_view_mut`, `try_make_view_mut`, `make_mut`) transparently
+    /// mutable access (`as_view_mut`, `try_cow_view_mut`, `make_mut`) transparently
     /// performs copy-on-write into owned aligned storage without mutating `storage`.
     /// Call [`into_external`](Self::into_external) to recover `S` zero-copy.
     #[allow(clippy::result_large_err)]
@@ -2741,7 +2750,7 @@ impl PixelBuf {
     /// [`SampleFacts`] and copy-on-write promoting immutable external storage if needed.
     ///
     /// For fallible external-storage CoW without panicking on OOM, use
-    /// `buf.try_make_view_mut()?.row_mut(y)`.
+    /// `buf.try_cow_view_mut()?.row_mut(y)`.
     ///
     /// # Panics
     ///
@@ -2790,9 +2799,10 @@ impl PixelBuf {
     /// `Err(BufferError::AllocationFailed)` only on OOM during copy-on-write promotion.
     #[inline]
     #[doc(alias = "try_as_view_mut")]
+    #[doc(alias = "try_make_view_mut")]
     #[doc(alias = "cow")]
     #[doc(alias = "copy_on_write")]
-    pub fn try_make_view_mut(&mut self) -> Result<PixelViewMut<'_>, At<BufferError>> {
+    pub fn try_cow_view_mut(&mut self) -> Result<PixelViewMut<'_>, At<BufferError>> {
         self.make_mut()?;
         self.facts = SampleFacts::NONE;
         let rb = self.row_bytes();
@@ -2812,11 +2822,11 @@ impl PixelBuf {
     /// Borrow a mutable [`PixelViewMut`], automatically clearing cached [`SampleFacts`].
     ///
     /// If backed by immutable external storage (`from_external`), promotes via copy-on-write;
-    /// use [`try_make_view_mut`](Self::try_make_view_mut) for fallible OOM handling.
+    /// use [`try_cow_view_mut`](Self::try_cow_view_mut) for fallible OOM handling.
     #[inline]
     #[must_use]
     pub fn as_view_mut(&mut self) -> PixelViewMut<'_> {
-        self.try_make_view_mut()
+        self.try_cow_view_mut()
             .expect("copy-on-write promotion of external PixelBuf failed")
     }
 
@@ -2844,7 +2854,7 @@ impl PixelBuf {
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_make_view_mut()?.into_sub_rows(start_y, row_count)
+        self.try_cow_view_mut()?.into_sub_rows(start_y, row_count)
     }
 
     /// Borrow a rectangular cropped subimage view without copying pixels.
@@ -2872,7 +2882,7 @@ impl PixelBuf {
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_make_view_mut()?.into_crop(rect)
+        self.try_cow_view_mut()?.into_crop(rect)
     }
 
     /// Consume this buffer and narrow it to a rectangular crop in **O(1) with zero pixel copies**.
@@ -2909,12 +2919,12 @@ impl PixelBuf {
     /// Atomically transform this buffer's bytes and metadata in place with zero reallocation.
     ///
     /// The closure receives `(active_bytes, input)` where `active_bytes` starts at pixel `(0, 0)`.
-    /// If it returns `Some(output)`, the new format and geometry are validated against the
-    /// existing storage and adopted atomically; if it returns `None`, the buffer's metadata is
-    /// unchanged.
+    /// Return [`InPlaceTransformDecision::Updated`] to validate and atomically adopt the new
+    /// stride/format/origin/facts against existing storage, or [`InPlaceTransformDecision::Unchanged`]
+    /// to leave metadata untouched.
     pub fn transform_in_place<F>(&mut self, f: F) -> Result<(), At<BufferError>>
     where
-        F: FnOnce(&mut [u8], InPlaceTransformInput<'_>) -> Option<InPlaceTransformOutput>,
+        F: FnOnce(&mut [u8], InPlaceTransformInput<'_>) -> InPlaceTransformDecision,
     {
         self.make_mut()?;
         let active = &mut self.storage.as_bytes_mut()[self.offset..];
@@ -2925,8 +2935,9 @@ impl PixelBuf {
             format: &self.spec,
             origin: origin_ref(&self.origin),
         };
-        let Some(output) = f(active, input) else {
-            return Ok(());
+        let output = match f(active, input) {
+            InPlaceTransformDecision::Unchanged => return Ok(()),
+            InPlaceTransformDecision::Updated(out) => out,
         };
         let InPlaceTransformOutput {
             stride_bytes: new_stride,
@@ -3070,8 +3081,10 @@ impl PixelBuf {
     /// compacting active pixels within each row (copy-on-write promoting immutable external
     /// storage via `make_mut()`).
     ///
-    /// Keeps existing `stride_bytes()`, clears cached [`SampleFacts`], and updates
-    /// `AlphaMode::Opaque` / `AlphaMode::Undefined` to `AlphaMode::None`.
+    /// Keeps existing `stride_bytes()` unchanged (leaving trailing inter-row slack so multi-row
+    /// buffers do not shift across rows; chain [`into_tight_rows`](Self::into_tight_rows) afterwards
+    /// if tight `stride_bytes() == row_bytes()` packing is required), clears cached [`SampleFacts`],
+    /// and updates `AlphaMode::Opaque` / `AlphaMode::Undefined` to `AlphaMode::None`.
     /// Refuses live alpha (`Straight`/`Premultiplied`), packed-word layouts, and unsupported
     /// source/target orders with [`BufferError::IncompatibleLayout`].
     pub fn drop_unused_lane_in_place(
@@ -3920,14 +3933,15 @@ impl PlaneBuf {
     /// immutable external storage without panicking on OOM.
     #[inline]
     #[doc(alias = "try_as_view_mut")]
+    #[doc(alias = "try_make_view_mut")]
     #[doc(alias = "cow")]
     #[doc(alias = "copy_on_write")]
-    pub fn try_make_view_mut(&mut self) -> Result<PlaneViewMut<'_>, At<BufferError>> {
+    pub fn try_cow_view_mut(&mut self) -> Result<PlaneViewMut<'_>, At<BufferError>> {
         let rb = self.row_bytes();
         let end = required_bytes(self.height, self.stride, rb).unwrap_or(0);
         let bytes = self
             .storage
-            .try_make_bytes_mut()
+            .try_cow_bytes_mut()
             .map_err(|e| err_at(e.into()))?;
         Ok(PlaneViewMut {
             spec: self.spec,
@@ -4103,7 +4117,7 @@ impl PlaneBuf {
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_make_view_mut()?.into_crop(rect)
+        self.try_cow_view_mut()?.into_crop(rect)
     }
 
     /// Zero-copy typed slice view of row `y` (e.g. `plane.row_as::<u16>(y)`).
@@ -4281,7 +4295,7 @@ pub struct PlanarBuf {
 }
 
 impl PlanarBuf {
-    /// Maximum plane count supported in a single [`PlanarBuf`].
+    /// Maximum plane count (`64`) supported in a single [`PlanarBuf`].
     pub const MAX_PLANES: usize = 64;
 
     /// Fallibly allocate a zero-filled multi-plane buffer for `plane_formats` (`1..=64` planes).
@@ -6327,7 +6341,7 @@ impl PlanarBuf {
     /// Borrow all planes mutably as a [`PlanarViewMut`] (zero-allocation for `<= 4` planes).
     #[must_use]
     pub fn as_view_mut(&mut self) -> PlanarViewMut<'_> {
-        self.try_make_view_mut()
+        self.try_cow_view_mut()
             .expect("PlanarBuf::as_view_mut allocation failed")
     }
 
@@ -6335,34 +6349,35 @@ impl PlanarBuf {
     /// promotion on immutable external planes without panicking on OOM (zero heap allocation
     /// for `<= 4` owned/mutable planes).
     #[doc(alias = "try_as_view_mut")]
+    #[doc(alias = "try_make_view_mut")]
     #[doc(alias = "cow")]
     #[doc(alias = "copy_on_write")]
-    pub fn try_make_view_mut(&mut self) -> Result<PlanarViewMut<'_>, At<BufferError>> {
+    pub fn try_cow_view_mut(&mut self) -> Result<PlanarViewMut<'_>, At<BufferError>> {
         let len = self.planes.len();
         let mut iter = self.planes.iter_mut();
         let storage = match len {
-            1 => PlanarMutStorage::One([iter.next().unwrap().try_make_view_mut()?]),
+            1 => PlanarMutStorage::One([iter.next().unwrap().try_cow_view_mut()?]),
             2 => PlanarMutStorage::Two([
-                iter.next().unwrap().try_make_view_mut()?,
-                iter.next().unwrap().try_make_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
             ]),
             3 => PlanarMutStorage::Three([
-                iter.next().unwrap().try_make_view_mut()?,
-                iter.next().unwrap().try_make_view_mut()?,
-                iter.next().unwrap().try_make_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
             ]),
             4 => PlanarMutStorage::Four([
-                iter.next().unwrap().try_make_view_mut()?,
-                iter.next().unwrap().try_make_view_mut()?,
-                iter.next().unwrap().try_make_view_mut()?,
-                iter.next().unwrap().try_make_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
+                iter.next().unwrap().try_cow_view_mut()?,
             ]),
             n => {
                 let mut v = Vec::new();
                 v.try_reserve_exact(n)
                     .map_err(|_| err_at(BufferError::AllocationFailed))?;
                 for p in iter {
-                    v.push(p.try_make_view_mut()?);
+                    v.push(p.try_cow_view_mut()?);
                 }
                 PlanarMutStorage::Spill(v)
             }
@@ -6401,7 +6416,7 @@ impl PlanarBuf {
         {
             return Err(err_at(BufferError::OutOfBounds));
         }
-        self.try_make_view_mut()?.into_crop(rect)
+        self.try_cow_view_mut()?.into_crop(rect)
     }
 }
 
@@ -6497,6 +6512,9 @@ pub struct DualLayerHdrBufParts {
 }
 
 /// Borrowed validated ISO 21496-1 / UltraHDR dual-layer HDR view (zero copy).
+///
+/// The `gain_map` layer may have any positive dimensions independent of `base` (full-resolution,
+/// 1/2, 1/4, or arbitrary aspect ratio); resampling happens during reconstruction.
 #[derive(Clone, Debug)]
 pub struct DualLayerHdrView<'a> {
     base: PixelView<'a>,
@@ -6615,6 +6633,8 @@ impl<'a> DualLayerHdrView<'a> {
 /// Container-agnostic dual-layer HDR image (base + numeric gain map + exact ISO 21496-1 metadata).
 ///
 /// Unifies UltraHDR JPEG, AVIF `tmap`, JXL `jhgm`, and PNG gain-map HDR in one validated core type.
+/// `gain_map` dimensions are independent of `base` dimensions (any positive resolution ratio such
+/// as full-res, 1/2, or 1/4 is permitted).
 #[derive(Clone, Debug)]
 pub struct DualLayerHdrBuf {
     base: PixelBuf,

@@ -9,23 +9,23 @@
 ## summary
 #
 #   pub modules                                22
-#   pub types (struct/enum/trait/alias)        96
-#   pub consts/statics                        131
+#   pub types (struct/enum/trait/alias)        98
+#   pub consts/statics                        133
 #   free functions                             75
 #   inherent methods                          186
 #   struct fields                             146
-#   enum variants                             190
+#   enum variants                             194
 #   re-exports                                  4
-#   trait roster entries (type × trait)       228
-#   auto-trait-complete types                  39
+#   trait roster entries (type × trait)       234
+#   auto-trait-complete types                  40
 #   auto-trait exceptions                       8
 #
 # per-module pub lines:
-#   (root)                          335
+#   (root)                          340
 #   accelerators                     22
 #   cms                               5
 #   codes                            41
-#   compact                          12
+#   compact                          15
 #   error                            23
 #   gainmap                          96
 #   gamut                            11
@@ -42,7 +42,7 @@
 #   tonemap                          62
 #   ycbcr                            12
 
-## items (735 lines)
+## items (741 lines)
 
 pub mod zenpixels_convert
 pub use <<zenpixels::*>>
@@ -124,6 +124,9 @@ pub const fn codes::CodeMap::output(&self) -> zenpixels::sample::SampleEncoding 
 pub mod compact
 pub compact::AlphaCompaction::DropUnusedLanes
 pub compact::AlphaCompaction::RetagOpaque
+pub compact::CompactOutcome::Compacted
+pub compact::CompactOutcome::Unchanged
+pub const fn compact::CompactOutcome::is_compacted(self) -> bool [also: (root)]
 pub compact::CompactionReport::requires_alpha: core::option::Option<bool>
 pub compact::CompactionReport::requires_chroma: core::option::Option<bool>
 pub compact::CompactionReport::requires_u16_precision: core::option::Option<bool>
@@ -182,7 +185,7 @@ pub fn gainmap::GainMapApplier::destination_format(&self) -> &zenpixels::color::
 pub fn gainmap::GainMapApplier::for_view(&zenpixels::buffer::DualLayerHdrView<'_>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
 pub const fn gainmap::GainMapApplier::is_zero_weight(&self) -> bool
 pub fn gainmap::GainMapApplier::new(gainmap::GainMapLayer, gainmap::GainMapLayer, zenpixels::color::GainMapMetadata, core::option::Option<&zenpixels::color::ColorSpace>, &gainmap::GainMapApplyConfig) -> core::result::Result<Self, whereat::at::At<error::ConvertError>>
-pub const fn gainmap::GainMapApplier::orientation(&self) -> zenpixels::orientation::Orientation
+pub const fn gainmap::GainMapApplier::pending_orientation(&self) -> zenpixels::orientation::Orientation
 pub fn gainmap::GainMapApplier::reset_cache(&mut self)
 pub const fn gainmap::GainMapApplier::signed_weight(&self) -> f32
 pub struct gainmap::GainMapApplyConfig
@@ -267,10 +270,10 @@ pub fn gamut::GamutMatrix::then(&self, &Self) -> Self
 pub const fn gamut::GamutMatrix::to_xyz(zenpixels::color::Primaries) -> core::option::Option<&'static Self> [also: (root)]
 pub mod icc_profiles
 #[non_exhaustive] pub enum icc_profiles::SynthesizedIcc
-pub icc_profiles::SynthesizedIcc::CmsUnsupported
 pub icc_profiles::SynthesizedIcc::IccDbDisabled
 pub icc_profiles::SynthesizedIcc::NotNeeded
 pub icc_profiles::SynthesizedIcc::Profile(alloc::borrow::Cow<'static, [u8]>)
+pub icc_profiles::SynthesizedIcc::Unsupported
 pub fn icc_profiles::SynthesizedIcc::for_cicp(zenpixels::cicp::Cicp) -> Self
 pub fn icc_profiles::SynthesizedIcc::for_gray_cicp(zenpixels::cicp::Cicp) -> Self
 pub const icc_profiles::ADOBE_RGB: &[u8]
@@ -533,6 +536,9 @@ pub CodesError::RangeMismatch
 pub CodesError::RangeMismatch::destination: zenpixels::color::SignalRange
 pub CodesError::RangeMismatch::source: zenpixels::color::SignalRange
 pub CodesError::Read(zenpixels::sample::plane::CodePlaneError)
+pub enum CompactOutcome [also: compact]
+pub CompactOutcome::Compacted
+pub CompactOutcome::Unchanged
 #[non_exhaustive] pub enum ConvertError [also: error]
 pub ConvertError::AllocationFailed
 pub ConvertError::AlphaLossForbidden
@@ -760,7 +766,7 @@ pub fn apply_orientation_owned(zenpixels::buffer::PixelBuf, zenpixels::orientati
 pub fn bake_orientation(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn bake_orientation_banded(&zenpixels::buffer::BandedBuf, zenpixels::buffer::BandSizing) -> core::result::Result<zenpixels::buffer::BandedBuf, whereat::at::At<error::ConvertError>> [also: orient]
 pub fn bake_orientation_owned(zenpixels::buffer::PixelBuf) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: orient]
-pub fn compact_in_place(&mut zenpixels::buffer::PixelBuf, compact::AlphaCompaction) -> core::result::Result<bool, whereat::at::At<error::ConvertError>> [also: compact]
+pub fn compact_in_place(&mut zenpixels::buffer::PixelBuf, compact::AlphaCompaction) -> core::result::Result<compact::CompactOutcome, whereat::at::At<error::ConvertError>> [also: compact]
 pub fn compact_to_buf(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<core::option::Option<zenpixels::buffer::PixelBuf>, whereat::at::At<error::ConvertError>> [also: compact]
 pub fn convert_into<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
 pub fn convert_into_with_peak<S: zenpixels::buffer::PixelSource + ?core::marker::Sized, D: zenpixels::buffer::PixelSink + ?core::marker::Sized>(&S, &mut D, &policy::ConvertPolicy, zenpixels::hdr::PeakSource) -> core::result::Result<(), whereat::at::At<error::ConvertError>> [also: plan]
@@ -780,7 +786,7 @@ pub fn to_rgb8_if_opaque(&zenpixels::buffer::PixelView<'_>) -> core::result::Res
 pub fn to_rgba8(&zenpixels::buffer::PixelView<'_>) -> core::result::Result<zenpixels::buffer::PixelBuf, whereat::at::At<error::ConvertError>> [also: plan]
 pub fn unpack_code_planes_into(&[zenpixels::sample::plane::CodePlane<'_>], zenpixels::color::SignalRange, (usize, usize), &mut zenpixels::buffer::PixelViewMut<'_>) -> core::result::Result<zenpixels::sample::exact::ExactDepth, whereat::at::At<codes::CodesError>> [also: codes]
 
-## trait impls (47 types)
+## trait impls (48 types)
 
 accelerators::Accelerators: Clone, Copy, Debug, Default, Eq, PartialEq
 codes::CodeMap: Clone, Copy, Debug, Eq, PartialEq
@@ -788,6 +794,7 @@ codes::CodeMapError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 codes::CodeRole: Clone, Copy, Debug, Eq, Hash, PartialEq
 codes::CodesError: Clone, Debug, Display, Eq, Error, PartialEq
 compact::AlphaCompaction: Clone, Copy, Debug, Eq, Hash, PartialEq
+compact::CompactOutcome: Clone, Copy, Debug, Eq, Hash, PartialEq
 compact::CompactionReport: Clone, Copy, Debug, Default, Eq, PartialEq
 error::ConvertError: Clone, Copy, Debug, Display, Eq, Error, From<enough::reason::StopReason>, From<zenpixels::buffer::BufferError>, From<zenpixels::color::ColorError>, From<zenpixels::layout::LayoutError>, PartialEq
 gainmap::GainMapApplier: Clone, Debug
