@@ -88,6 +88,7 @@ pub mod output;
 pub mod perceptual;
 pub mod plan;
 pub mod planar;
+pub mod planar_capture;
 pub mod policy;
 pub mod scan;
 pub(crate) mod strip;
@@ -100,7 +101,7 @@ pub mod ycbcr;
 pub use accelerators::Accelerators;
 #[cfg(feature = "cms-moxcms")]
 pub use cms::MoxCms;
-pub use cms::{CmsBackend, CmsTransform};
+pub use cms::{CmsBackend, CmsBinding, CmsChoice, CmsQuote, CmsTransform, ColorServices};
 #[cfg(feature = "cms-lcms")]
 pub use cms::{Lcms, LcmsUnoptimized};
 pub use codes::{CodeMap, CodeMapError, CodeRole, CodesError, unpack_code_planes_into};
@@ -132,6 +133,9 @@ pub use plan::{
 pub use planar::{
     ChromaUpsample, PlanarReconstructionOptions, reconstruct_planar_f32, reconstruct_planar_into,
     reconstruct_planar_to_buf,
+};
+pub use planar_capture::{
+    CaptureScratch, ChromaDownsample, PlanarCaptureOptions, PlanarCapturePlan, PlanarCaptureSpec,
 };
 pub use policy::{
     AlphaPolicy, ConvertPolicy, DepthPolicy, GamutPolicy, LumaCoefficients, LumaDomain, RangePolicy,

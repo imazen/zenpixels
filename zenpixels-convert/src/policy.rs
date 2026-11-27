@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use zenpixels::{Color, DiffuseWhite, HlgRendering, Nits, SampleFacts};
 
 use crate::accelerators::Accelerators;
-use crate::cms::CmsBackend;
+use crate::cms::{CmsBackend, CmsChoice, ColorServices};
 use crate::tonemap::ToneMapper;
 
 /// Policy when destination has lower numeric precision than source (e.g. `F32 → U8`, `U16 → U8`).
@@ -366,6 +366,38 @@ impl ConvertPolicy {
     #[must_use]
     pub fn with_cms(mut self, cms: Arc<dyn CmsBackend>) -> Self {
         self.cms = Some(cms);
+        self
+    }
+
+    /// Apply a shared [`ColorServices`] bundle to this policy.
+    ///
+    /// - [`CmsChoice::Inherit`]: leaves `cms` and `allow_icc_substitution` unchanged.
+    /// - [`CmsChoice::StrictNoIcc`]: clears `cms` and sets `allow_icc_substitution = false`,
+    ///   permitting validated same-profile ICC carriage and known-space math while refusing
+    ///   both CMS evaluation and inferred matrix+TRC ICC substitution.
+    /// - [`CmsChoice::Use`]: installs the binding's [`CmsBackend`].
+    /// - `services.tone_mapper`: attaches the tone mapper if present without altering
+    ///   `tone_map_hdr_to_sdr`.
+    ///
+    /// Apply `with_color_services` last when composing a policy: subsequent calls to
+    /// [`with_cms`](Self::with_cms) or [`with_icc_substitution`](Self::with_icc_substitution)
+    /// overwrite the fields set here.
+    #[inline]
+    #[must_use]
+    pub fn with_color_services(mut self, services: &ColorServices) -> Self {
+        match &services.cms {
+            CmsChoice::Inherit => {}
+            CmsChoice::StrictNoIcc => {
+                self.cms = None;
+                self.allow_icc_substitution = false;
+            }
+            CmsChoice::Use(binding) => {
+                self.cms = Some(Arc::clone(binding.backend()));
+            }
+        }
+        if let Some(mapper) = &services.tone_mapper {
+            self.tone_mapper = Some(Arc::clone(mapper));
+        }
         self
     }
 

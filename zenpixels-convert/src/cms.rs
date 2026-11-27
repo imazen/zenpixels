@@ -1,14 +1,17 @@
-//! Clean Color Management System (`CmsBackend`) trait + optional `MoxCms` / `Lcms` adapters.
+//! Clean Color Management System (`CmsBackend`) trait, named/quoted [`CmsBinding`],
+//! shared [`ColorServices`] / [`CmsChoice`], and optional `MoxCms` / `Lcms` adapters.
 //!
 //! Only invoked when converting arbitrary [`ColorSpace::Icc`](zenpixels::ColorSpace::Icc)
 //! profiles (that don't match a safe matrix+TRC fingerprint) or [`ColorSpace::Cmyk`](zenpixels::ColorSpace::Cmyk).
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use whereat::At;
 use zenpixels::PixelFormat;
 
 use crate::error::ConvertError;
+use crate::tonemap::ToneMapper;
 
 /// Shareable, stateless row-level CMS transform executor (`Send + Sync`).
 pub trait CmsTransform: Send + Sync {
@@ -38,6 +41,400 @@ pub trait CmsBackend: Send + Sync + Debug {
     ) -> Result<Arc<dyn CmsTransform>, At<ConvertError>>;
 }
 
+/// Conservative capability, memory, stack, and concurrency quote for a [`CmsBinding`].
+///
+/// Hosts and routing planners inspect this quote before admitting a CMS transform
+/// against memory limits, constrained thread stacks (such as 256 KiB IIS worker stacks),
+/// or concurrency pools. `None` means the bound is unknown/unproven for arbitrary
+/// profiles and cannot authorize a strict hard limit without route qualification or
+/// explicit best-effort policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct CmsQuote {
+    /// Supports `SampleType::U8` transforms.
+    pub supports_u8: bool,
+    /// Supports `SampleType::U16` transforms.
+    pub supports_u16: bool,
+    /// Supports `SampleType::F16` transforms.
+    pub supports_f16: bool,
+    /// Supports `SampleType::F32` transforms.
+    pub supports_f32: bool,
+    /// Supports `ColorSpace::Cmyk` ink transforms.
+    pub supports_cmyk: bool,
+    /// Supports `RenderingIntent::AbsoluteColorimetric` (media-white / `chad` un-adaptation).
+    pub supports_absolute_colorimetric: bool,
+    /// Supports ICC v4 float `D2B*`/`B2D*` MPE pipelines.
+    pub supports_float_mpe: bool,
+    /// Proven conservative heap bytes allocated while building one transform (`None` = unknown).
+    pub build_memory_bytes: Option<u64>,
+    /// Proven conservative heap bytes retained per live [`CmsTransform`] (`None` = unknown).
+    pub transform_memory_bytes: Option<u64>,
+    /// Proven conservative heap bytes allocated per `transform_row` call (`Some(0)` = zero-alloc apply; `None` = unknown).
+    pub apply_scratch_bytes: Option<u64>,
+    /// Proven conservative peak stack bytes consumed by `build_transform` / `transform_row` (`None` = unknown).
+    pub peak_stack_bytes: Option<u32>,
+    /// Whether `build_transform` and `transform_row` are qualified for constrained 256 KiB stacks.
+    pub small_stack_qualified: bool,
+    /// Whether concurrent `transform_row` calls across threads are lock-free / contention-free.
+    pub concurrent_apply: bool,
+}
+
+impl CmsQuote {
+    /// Conservative empty quote with all capabilities disabled, unknown bounds (`None`),
+    /// and `small_stack_qualified = false`.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            supports_u8: false,
+            supports_u16: false,
+            supports_f16: false,
+            supports_f32: false,
+            supports_cmyk: false,
+            supports_absolute_colorimetric: false,
+            supports_float_mpe: false,
+            build_memory_bytes: None,
+            transform_memory_bytes: None,
+            apply_scratch_bytes: None,
+            peak_stack_bytes: None,
+            small_stack_qualified: false,
+            concurrent_apply: false,
+        }
+    }
+
+    /// Set `U8` support.
+    #[inline]
+    #[must_use]
+    pub const fn with_u8(mut self, yes: bool) -> Self {
+        self.supports_u8 = yes;
+        self
+    }
+
+    /// Set `U16` support.
+    #[inline]
+    #[must_use]
+    pub const fn with_u16(mut self, yes: bool) -> Self {
+        self.supports_u16 = yes;
+        self
+    }
+
+    /// Set `F16` support.
+    #[inline]
+    #[must_use]
+    pub const fn with_f16(mut self, yes: bool) -> Self {
+        self.supports_f16 = yes;
+        self
+    }
+
+    /// Set `F32` support.
+    #[inline]
+    #[must_use]
+    pub const fn with_f32(mut self, yes: bool) -> Self {
+        self.supports_f32 = yes;
+        self
+    }
+
+    /// Set `ColorSpace::Cmyk` support.
+    #[inline]
+    #[must_use]
+    pub const fn with_cmyk(mut self, yes: bool) -> Self {
+        self.supports_cmyk = yes;
+        self
+    }
+
+    /// Set `RenderingIntent::AbsoluteColorimetric` support.
+    #[inline]
+    #[must_use]
+    pub const fn with_absolute_colorimetric(mut self, yes: bool) -> Self {
+        self.supports_absolute_colorimetric = yes;
+        self
+    }
+
+    /// Set ICC v4 float MPE (`D2B*`/`B2D*`) support.
+    #[inline]
+    #[must_use]
+    pub const fn with_float_mpe(mut self, yes: bool) -> Self {
+        self.supports_float_mpe = yes;
+        self
+    }
+
+    /// Set proven conservative heap bytes used while building one transform (`None` = unknown).
+    #[inline]
+    #[must_use]
+    pub const fn with_build_memory_bytes(mut self, bytes: Option<u64>) -> Self {
+        self.build_memory_bytes = bytes;
+        self
+    }
+
+    /// Set proven conservative heap bytes retained per live [`CmsTransform`] (`None` = unknown).
+    #[inline]
+    #[must_use]
+    pub const fn with_transform_memory_bytes(mut self, bytes: Option<u64>) -> Self {
+        self.transform_memory_bytes = bytes;
+        self
+    }
+
+    /// Set proven conservative heap bytes allocated per `transform_row` call (`Some(0)` = zero-alloc apply).
+    #[inline]
+    #[must_use]
+    pub const fn with_apply_scratch_bytes(mut self, bytes: Option<u64>) -> Self {
+        self.apply_scratch_bytes = bytes;
+        self
+    }
+
+    /// Set proven conservative peak stack bytes used by `build_transform` and `transform_row`.
+    #[inline]
+    #[must_use]
+    pub const fn with_peak_stack_bytes(mut self, bytes: Option<u32>) -> Self {
+        self.peak_stack_bytes = bytes;
+        self
+    }
+
+    /// Declare whether this backend is qualified for constrained 256 KiB thread stacks.
+    #[inline]
+    #[must_use]
+    pub const fn with_small_stack_qualified(mut self, yes: bool) -> Self {
+        self.small_stack_qualified = yes;
+        self
+    }
+
+    /// Declare whether concurrent `transform_row` calls across threads are contention-free.
+    #[inline]
+    #[must_use]
+    pub const fn with_concurrent_apply(mut self, yes: bool) -> Self {
+        self.concurrent_apply = yes;
+        self
+    }
+}
+
+/// Named, versioned [`CmsBackend`] binding with conservative resource and capability quotes.
+///
+/// Swap CMS implementations (such as `MoxCms`, pure-Rust `Lcms`, C `lcms2`, or a custom
+/// provider) across `zenpixels-convert`, `zencodec-render`, `zencodecs`, `zenpipe`, and
+/// hosts by substituting this binding alone.
+#[derive(Clone, Debug)]
+pub struct CmsBinding {
+    id: Box<str>,
+    revision: Box<str>,
+    backend: Arc<dyn CmsBackend>,
+    quote: CmsQuote,
+}
+
+impl CmsBinding {
+    /// Construct a named, versioned CMS binding.
+    ///
+    /// Prefer stable reverse-DNS provider identifiers (e.g. `"org.imazen.cms.moxcms"`,
+    /// `"org.imazen.cms.lcms"`) and a revision string that changes whenever transform output
+    /// or qualification changes so downstream route caches invalidate deterministically.
+    #[must_use]
+    pub fn new(
+        id: impl Into<Box<str>>,
+        revision: impl Into<Box<str>>,
+        backend: Arc<dyn CmsBackend>,
+        quote: CmsQuote,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            revision: revision.into(),
+            backend,
+            quote,
+        }
+    }
+
+    /// Stable provider identifier (e.g. `"org.imazen.cms.moxcms"`).
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Provider revision / version string for deterministic cache keys and diagnostics.
+    #[inline]
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    /// Cache identity pair `(id, revision)`.
+    #[inline]
+    #[must_use]
+    pub fn cache_key(&self) -> (&str, &str) {
+        (&self.id, &self.revision)
+    }
+
+    /// Underlying [`CmsBackend`] implementation.
+    #[inline]
+    #[must_use]
+    pub fn backend(&self) -> &Arc<dyn CmsBackend> {
+        &self.backend
+    }
+
+    /// Conservative resource and capability quote.
+    #[inline]
+    #[must_use]
+    pub const fn quote(&self) -> CmsQuote {
+        self.quote
+    }
+}
+
+/// Explicit color-management provider selection for a conversion or pipeline run.
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub enum CmsChoice {
+    /// Inherit the parent or host default CMS binding when resolved at run binding.
+    #[default]
+    Inherit,
+    /// Forbid both ICC CMS evaluation and inferred matrix+TRC ICC substitution.
+    ///
+    /// Validated ICC profile carriage (pass-through when source and destination carry
+    /// equivalent profiles) and pure known-space math remain permitted.
+    StrictNoIcc,
+    /// Use this exact named [`CmsBinding`] for arbitrary ICC and CMYK conversions.
+    Use(CmsBinding),
+}
+
+impl CmsChoice {
+    /// Returns `true` when this choice is concrete (`StrictNoIcc` or `Use`), not `Inherit`.
+    #[inline]
+    #[must_use]
+    pub const fn is_frozen(&self) -> bool {
+        !matches!(self, Self::Inherit)
+    }
+
+    /// Borrow the bound [`CmsBinding`] if `self` is [`CmsChoice::Use`].
+    #[inline]
+    #[must_use]
+    pub fn binding(&self) -> Option<&CmsBinding> {
+        match self {
+            Self::Use(b) => Some(b),
+            _ => None,
+        }
+    }
+}
+
+/// Shared color-management and tone-mapping service bundle.
+///
+/// Hosts configure a default [`ColorServices`] once, resolve per-run overrides via
+/// [`resolve_against`](Self::resolve_against) or [`freeze_or_strict`](Self::freeze_or_strict),
+/// and stamp the frozen services onto [`ConvertPolicy::with_color_services`](crate::ConvertPolicy::with_color_services).
+#[derive(Clone, Debug, Default)]
+#[non_exhaustive]
+pub struct ColorServices {
+    /// CMS provider choice (`Inherit`, `StrictNoIcc`, or `Use(CmsBinding)`).
+    pub cms: CmsChoice,
+    /// Optional custom HDR → SDR tone mapper shared across conversions.
+    pub tone_mapper: Option<Arc<dyn ToneMapper>>,
+}
+
+impl ColorServices {
+    /// Inherit both CMS selection and tone mapper from the enclosing scope.
+    #[inline]
+    #[must_use]
+    pub fn inherit() -> Self {
+        Self::default()
+    }
+
+    /// Forbid ICC CMS evaluation and inferred ICC substitution while permitting
+    /// validated profile carriage and known-space math.
+    #[inline]
+    #[must_use]
+    pub fn strict_no_icc() -> Self {
+        Self {
+            cms: CmsChoice::StrictNoIcc,
+            tone_mapper: None,
+        }
+    }
+
+    /// Create a service bundle bound to a specific [`CmsBinding`].
+    #[inline]
+    #[must_use]
+    pub fn with_cms_binding(binding: CmsBinding) -> Self {
+        Self {
+            cms: CmsChoice::Use(binding),
+            tone_mapper: None,
+        }
+    }
+
+    /// Replace the [`CmsChoice`].
+    #[inline]
+    #[must_use]
+    pub fn with_cms(mut self, choice: CmsChoice) -> Self {
+        self.cms = choice;
+        self
+    }
+
+    /// Attach a custom [`ToneMapper`].
+    #[inline]
+    #[must_use]
+    pub fn with_tone_mapper(mut self, mapper: Arc<dyn ToneMapper>) -> Self {
+        self.tone_mapper = Some(mapper);
+        self
+    }
+
+    /// Returns `true` when [`cms`](Self::cms) is no longer [`CmsChoice::Inherit`].
+    #[inline]
+    #[must_use]
+    pub const fn is_frozen(&self) -> bool {
+        self.cms.is_frozen()
+    }
+
+    /// Borrow the active [`CmsChoice`].
+    #[inline]
+    #[must_use]
+    pub const fn cms_choice(&self) -> &CmsChoice {
+        &self.cms
+    }
+
+    /// Borrow the selected [`CmsBinding`], if [`CmsChoice::Use`].
+    #[inline]
+    #[must_use]
+    pub fn cms_binding(&self) -> Option<&CmsBinding> {
+        self.cms.binding()
+    }
+
+    /// Borrow the configured [`ToneMapper`], if any.
+    #[inline]
+    #[must_use]
+    pub fn tone_mapper(&self) -> Option<&Arc<dyn ToneMapper>> {
+        self.tone_mapper.as_ref()
+    }
+
+    /// Resolve [`CmsChoice::Inherit`] and missing `tone_mapper` against `parent`.
+    ///
+    /// Explicit [`CmsChoice::StrictNoIcc`] and [`CmsChoice::Use`] choices on `self`
+    /// override `parent`.
+    #[must_use]
+    pub fn resolve_against(&self, parent: &Self) -> Self {
+        let cms = match &self.cms {
+            CmsChoice::Inherit => parent.cms.clone(),
+            explicit => explicit.clone(),
+        };
+        let tone_mapper = self
+            .tone_mapper
+            .as_ref()
+            .or(parent.tone_mapper.as_ref())
+            .map(Arc::clone);
+        Self { cms, tone_mapper }
+    }
+
+    /// Freeze inheritance for a run: [`CmsChoice::Inherit`] resolves to `Use(default_cms)`
+    /// if provided, or [`CmsChoice::StrictNoIcc`] if `None`.
+    #[must_use]
+    pub fn freeze_or_strict(&self, default_cms: Option<&CmsBinding>) -> Self {
+        let cms = match &self.cms {
+            CmsChoice::Inherit => match default_cms {
+                Some(b) => CmsChoice::Use(b.clone()),
+                None => CmsChoice::StrictNoIcc,
+            },
+            explicit => explicit.clone(),
+        };
+        Self {
+            cms,
+            tone_mapper: self.tone_mapper.as_ref().map(Arc::clone),
+        }
+    }
+}
+
 #[cfg(feature = "cms-moxcms")]
 mod moxcms_impl {
     use super::*;
@@ -57,6 +454,31 @@ mod moxcms_impl {
     /// [`ConvertError::UnsupportedRoute`]. Use [`crate::Lcms`] for `AbsoluteColorimetric`.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct MoxCms;
+
+    impl MoxCms {
+        /// Canonical named, conservatively quoted [`CmsBinding`] for `moxcms`
+        /// (`"org.imazen.cms.moxcms"`).
+        ///
+        /// Heap build/transform size and peak stack depend on profile structure and are left
+        /// unknown (`None` / `small_stack_qualified = false`) until qualified per route.
+        #[must_use]
+        pub fn binding() -> CmsBinding {
+            CmsBinding::new(
+                "org.imazen.cms.moxcms",
+                concat!("moxcms-0.9/zenpixels-convert-", env!("CARGO_PKG_VERSION")),
+                Arc::new(Self),
+                CmsQuote::new()
+                    .with_u8(true)
+                    .with_u16(true)
+                    .with_f16(false)
+                    .with_f32(true)
+                    .with_cmyk(true)
+                    .with_absolute_colorimetric(false)
+                    .with_float_mpe(false)
+                    .with_concurrent_apply(true),
+            )
+        }
+    }
 
     fn to_mox_intent(intent: RenderingIntent) -> moxcms::RenderingIntent {
         match intent {
@@ -761,6 +1183,36 @@ mod lcms_impl {
     #[derive(Clone, Copy, Debug, Default)]
     pub struct Lcms;
 
+    impl Lcms {
+        /// Canonical named, conservatively quoted [`CmsBinding`] for pure-Rust `lcms`
+        /// (`"org.imazen.cms.lcms"`).
+        ///
+        /// Row execution uses stack-only scratch (`apply_scratch_bytes = Some(0)`). Profile
+        /// build/transform heap and peak stack remain unknown (`None` / `small_stack_qualified = false`)
+        /// until qualified per route.
+        #[must_use]
+        pub fn binding() -> CmsBinding {
+            CmsBinding::new(
+                "org.imazen.cms.lcms",
+                concat!(
+                    "lcms-rust-opt/zenpixels-convert-",
+                    env!("CARGO_PKG_VERSION")
+                ),
+                Arc::new(Self),
+                CmsQuote::new()
+                    .with_u8(true)
+                    .with_u16(true)
+                    .with_f16(true)
+                    .with_f32(true)
+                    .with_cmyk(true)
+                    .with_absolute_colorimetric(true)
+                    .with_float_mpe(true)
+                    .with_apply_scratch_bytes(Some(0))
+                    .with_concurrent_apply(true),
+            )
+        }
+    }
+
     /// Pure-Rust Little CMS backend with `FLAGS_NOOPTIMIZE` enabled.
     ///
     /// Evaluates profile stages directly without resampling into a 16-bit
@@ -769,6 +1221,32 @@ mod lcms_impl {
     /// integer CLUT loses shadow precision.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct LcmsUnoptimized;
+
+    impl LcmsUnoptimized {
+        /// Canonical named, conservatively quoted [`CmsBinding`] for unoptimized pure-Rust `lcms`
+        /// (`"org.imazen.cms.lcms_unoptimized"`).
+        #[must_use]
+        pub fn binding() -> CmsBinding {
+            CmsBinding::new(
+                "org.imazen.cms.lcms_unoptimized",
+                concat!(
+                    "lcms-rust-noopt/zenpixels-convert-",
+                    env!("CARGO_PKG_VERSION")
+                ),
+                Arc::new(Self),
+                CmsQuote::new()
+                    .with_u8(true)
+                    .with_u16(true)
+                    .with_f16(true)
+                    .with_f32(true)
+                    .with_cmyk(true)
+                    .with_absolute_colorimetric(true)
+                    .with_float_mpe(true)
+                    .with_apply_scratch_bytes(Some(0))
+                    .with_concurrent_apply(true),
+            )
+        }
+    }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum InkMode {
