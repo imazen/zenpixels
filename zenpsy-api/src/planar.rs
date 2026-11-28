@@ -26,6 +26,11 @@ pub trait PlanarMetric: Metric {
 pub trait PreparePlanarReference: PlanarMetric {
     /// Actual owned reference work, suitable for storage in an encoder callback.
     type PlanarPrepared: PlanarWarmReference<Output = Self::Output>;
+    /// Optional pre-allocation memory estimate (in bytes) for preparing a
+    /// `width × height` planar reference, for caller memory budgets.
+    fn estimated_reference_bytes(&self, _width: u32, _height: u32) -> Option<u64> {
+        None
+    }
     /// Build native reference work. Subsequent calls use fresh controls.
     fn warm_planar_reference(
         &mut self,
@@ -40,6 +45,13 @@ pub trait PreparePlanarReference: PlanarMetric {
 pub trait PlanarWarmReference {
     /// Complete owned native assessment.
     type Output: Evaluation;
+    /// Whether repeated evaluations of identical candidate planes return
+    /// bit-identical outputs with no call-dependent side effects.
+    ///
+    /// Iterative encoder loops may use this to stop early at a fixed point.
+    fn is_deterministic(&self) -> bool {
+        false
+    }
     /// Evaluate a candidate using actual prepared reference work.
     fn evaluate_planar(
         &mut self,
@@ -70,6 +82,26 @@ pub struct PreparedPlanarReference<P> {
     alpha: Option<AlphaMode>,
 }
 impl<P: PlanarWarmReference> PreparedPlanarReference<P> {
+    /// Dimensions `(width, height)` bound at reference preparation.
+    pub const fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    /// Plane layout bound at reference preparation.
+    pub fn layout(&self) -> &PlanarLayout {
+        &self.layout
+    }
+    /// Colour context bound at reference preparation.
+    pub fn color_context(&self) -> &ColorContext {
+        &self.color
+    }
+    /// Alpha interpretation bound at reference preparation.
+    pub const fn alpha_mode(&self) -> Option<AlphaMode> {
+        self.alpha
+    }
+    /// Whether this prepared reference evaluates identically on repeated identical inputs.
+    pub fn is_deterministic(&self) -> bool {
+        self.inner.is_deterministic()
+    }
     fn admit(&self, candidate: &PlanarSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<()> {
         admit(candidate, opts)?;
         if (candidate.width(), candidate.height()) != self.size {
@@ -192,6 +224,9 @@ pub fn prepare_planar_reference<M: PreparePlanarReference + ?Sized>(
 
 impl<P: PlanarWarmReference> PlanarWarmReference for PreparedPlanarReference<P> {
     type Output = P::Output;
+    fn is_deterministic(&self) -> bool {
+        self.inner.is_deterministic()
+    }
     fn evaluate_planar(
         &mut self,
         candidate: &PlanarSlice<'_>,

@@ -74,6 +74,37 @@ impl MapGrid {
     pub const fn cell_height(self) -> u32 {
         self.cell_height
     }
+    /// Whether the map has one cell per input pixel starting at `(0, 0)`.
+    pub const fn is_pixel_aligned(self, map_width: usize, map_height: usize) -> bool {
+        self.origin_x == 0
+            && self.origin_y == 0
+            && self.cell_width == 1
+            && self.cell_height == 1
+            && map_width == self.input_width as usize
+            && map_height == self.input_height as usize
+    }
+    /// Input-pixel half-open bounds `(x0, y0, x1, y1)` covered by cell `(col, row)`.
+    pub const fn cell_bounds(self, col: usize, row: usize) -> (i64, i64, i64, i64) {
+        let col_i64 = if col > i64::MAX as usize {
+            i64::MAX
+        } else {
+            col as i64
+        };
+        let row_i64 = if row > i64::MAX as usize {
+            i64::MAX
+        } else {
+            row as i64
+        };
+        let x0 = self
+            .origin_x
+            .saturating_add(col_i64.saturating_mul(self.cell_width as i64));
+        let y0 = self
+            .origin_y
+            .saturating_add(row_i64.saturating_mul(self.cell_height as i64));
+        let x1 = x0.saturating_add(self.cell_width as i64);
+        let y1 = y0.saturating_add(self.cell_height as i64);
+        (x0, y0, x1, y1)
+    }
 }
 
 /// A borrowed native numeric map, including reduced grids and strided rows.
@@ -94,5 +125,25 @@ impl<'a> MapView<'a> {
     /// Borrow an existing map without copying its samples or metadata.
     pub const fn new(spec: &'a ScoreSpec, values: AnyPlane<'a>, grid: MapGrid) -> Self {
         Self { spec, values, grid }
+    }
+    /// Borrow the native plane directly when samples are stored as `f32`.
+    pub const fn as_f32(&self) -> Option<zenpixels::plane::PlaneRef<'a, f32>> {
+        match self.values {
+            AnyPlane::F32(plane) => Some(plane),
+            _ => None,
+        }
+    }
+    /// Read cell `(col, row)` as `f64`, regardless of native `u8`, `u16` or `f32` storage.
+    pub fn sample_f64(&self, col: usize, row: usize) -> Option<f64> {
+        match self.values {
+            AnyPlane::F32(plane) => plane.row(row)?.get(col).map(|&v| f64::from(v)),
+            AnyPlane::U8(plane) => plane.row(row)?.get(col).map(|&v| f64::from(v)),
+            AnyPlane::U16(plane) => plane.row(row)?.get(col).map(|&v| f64::from(v)),
+            _ => None,
+        }
+    }
+    /// Convert cell `(col, row)` into a nonnegative lower-is-better distortion via [`ScoreSpec::loss`].
+    pub fn loss_at(&self, col: usize, row: usize) -> Option<f64> {
+        self.spec.loss(self.sample_f64(col, row)?)
     }
 }

@@ -123,6 +123,17 @@ pub trait Metric {
     type Output: Evaluation;
     /// Effective scoring configuration and actual implementation provenance.
     fn id(&self) -> MetricId;
+    /// Optional stable key of the headline scalar in [`Evaluation::scores`].
+    /// When `None`, callers use the first scalar exposed by the assessment.
+    fn headline_score_key(&self) -> Option<&str> {
+        None
+    }
+    /// Optional stable key of the primary spatial distortion or quality map
+    /// suitable for iterative encoder steering. Pass this key to
+    /// [`EvalOpts::with_map`] to request it explicitly.
+    fn steering_map_key(&self) -> Option<&str> {
+        None
+    }
     /// Native comparison. Poll controls and join owned workers before return.
     /// Use [`score`] for admission and returned-score checks.
     fn evaluate(
@@ -139,6 +150,11 @@ pub trait PrepareReference: Metric {
     type Prepared<'a>: WarmReference<Output = Self::Output>
     where
         Self: 'a;
+    /// Optional pre-allocation memory estimate (in bytes) for preparing a
+    /// `width × height` reference, for caller memory budgets.
+    fn estimated_reference_bytes(&self, _width: u32, _height: u32) -> Option<u64> {
+        None
+    }
     /// Prepare work preserving cold-result scalar bits.
     fn warm_reference(
         &mut self,
@@ -151,6 +167,13 @@ pub trait PrepareReference: Metric {
 pub trait WarmReference {
     /// Same structured result as the corresponding cold scorer.
     type Output: Evaluation;
+    /// Whether repeated evaluations of identical candidate pixels return
+    /// bit-identical outputs with no call-dependent side effects.
+    ///
+    /// Iterative encoder loops may use this to stop early at a fixed point.
+    fn is_deterministic(&self) -> bool {
+        false
+    }
     /// Score with fresh operation-local controls.
     fn evaluate(
         &mut self,
@@ -164,6 +187,14 @@ pub struct PreparedReference<P> {
     inner: P,
 }
 impl<P: WarmReference> PreparedReference<P> {
+    /// Dimensions `(width, height)` bound at reference preparation.
+    pub const fn size(&self) -> (u32, u32) {
+        self.size
+    }
+    /// Whether this prepared reference evaluates identically on repeated identical inputs.
+    pub fn is_deterministic(&self) -> bool {
+        self.inner.is_deterministic()
+    }
     /// Check candidate dimensions and return a validated native assessment.
     #[track_caller]
     pub fn score(&mut self, image: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<P::Output> {
