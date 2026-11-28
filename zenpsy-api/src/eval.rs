@@ -86,6 +86,25 @@ impl ScoreSpec {
         self.positive_infinity = value == f64::INFINITY;
         self
     }
+    /// Convert a finite ordered scalar with a finite identical-pair value into
+    /// a nonnegative lower-is-better distortion (`0.0` at identity).
+    ///
+    /// Returns `None` when [`Self::direction`] is [`Direction::Unordered`],
+    /// [`Self::perfect`] is absent or non-finite, or `value` is not finite.
+    pub fn loss(&self, value: f64) -> Option<f64> {
+        if !value.is_finite() {
+            return None;
+        }
+        let perfect = self.perfect?;
+        if !perfect.is_finite() {
+            return None;
+        }
+        match self.direction {
+            Direction::Lower => Some((value - perfect).max(0.0)),
+            Direction::Higher => Some((perfect - value).max(0.0)),
+            Direction::Unordered => None,
+        }
+    }
 }
 /// Unmodified scalar with borrowed semantics.
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +119,10 @@ impl<'a> Score<'a> {
     /// Borrow a descriptor for a native value.
     pub const fn new(spec: &'a ScoreSpec, value: f64) -> Self {
         Self { spec, value }
+    }
+    /// Nonnegative lower-is-better distortion derived from [`ScoreSpec::loss`].
+    pub fn loss(&self) -> Option<f64> {
+        self.spec.loss(self.value)
     }
 }
 /// Common access to a concrete assessment. Additional native fields remain
@@ -145,6 +168,46 @@ impl<'a> EvaluationRef<'a> {
     /// Visit every native map in output order.
     pub fn visit_maps(self, mut visitor: impl FnMut(crate::MapView<'a>)) {
         self.inner.visit_maps(&mut visitor);
+    }
+    /// First named scalar in native output order (headline score when applicable).
+    pub fn primary_score(self) -> Option<Score<'a>> {
+        let mut found = None;
+        self.visit_scores(|score| {
+            if found.is_none() {
+                found = Some(score);
+            }
+        });
+        found
+    }
+    /// Borrow a specific named scalar without allocating.
+    pub fn score(self, key: &str) -> Option<Score<'a>> {
+        let mut found = None;
+        self.visit_scores(|score| {
+            if found.is_none() && score.spec.key() == key {
+                found = Some(score);
+            }
+        });
+        found
+    }
+    /// First borrowed native map in output order.
+    pub fn primary_map(self) -> Option<crate::MapView<'a>> {
+        let mut found = None;
+        self.visit_maps(|map| {
+            if found.is_none() {
+                found = Some(map);
+            }
+        });
+        found
+    }
+    /// Borrow a specific native map by key without allocating.
+    pub fn map(self, key: &str) -> Option<crate::MapView<'a>> {
+        let mut found = None;
+        self.visit_maps(|map| {
+            if found.is_none() && map.spec.key() == key {
+                found = Some(map);
+            }
+        });
+        found
     }
 }
 pub(crate) trait EvaluationAccess {

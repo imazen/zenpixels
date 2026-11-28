@@ -94,6 +94,18 @@ cancellation and exactly-once invocation. A returned value cannot borrow the
 callback's temporary assessment. Commit consumer side effects after success.
 No encoder block reduction, normalization or target calibration is imposed.
 
+Metrics may additionally expose optional loop-integration metadata without
+changing scoring semantics: `Metric::headline_score_key` and
+`Metric::steering_map_key` name the primary scalar and spatial steering map;
+`PrepareReference::estimated_reference_bytes` and
+`PreparePlanarReference::estimated_reference_bytes` report pre-allocation
+reference storage for caller memory budgets; `WarmReference::is_deterministic`
+and `PlanarWarmReference::is_deterministic` opt repeatable prepared scorers into
+fixed-point early stops. `ScoreSpec::loss` / `Score::loss`, `EvaluationRef`
+keyed accessors, `MapGrid::is_pixel_aligned` / `cell_bounds`, and
+`MapView::as_f32` / `sample_f64` / `loss_at` help encoder loops consume both
+lower-is-better and higher-is-better metrics and reduced map grids directly.
+
 `MetricId` records the effective configuration and actual implementation.
 Persistence columns, fingerprint algorithms, registries, resource estimation,
 scheduling, backend fallback and video composition belong to consumers.

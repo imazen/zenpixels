@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `zenpsy-api`: add additive perceptual-loop primitives — `ScoreSpec::loss` and `Score::loss` (polarity-aware non-negative loss relative to `perfect()`), `MapView::{as_f32, sample_f64, loss_at}`, `MapGrid::{is_pixel_aligned, cell_bounds}`, `Evaluation::{score, map, primary_score, primary_map}`, `EvaluationRef::{score, map, primary_score, primary_map}`, `Metric::{headline_score_key, steering_map_key}`, `PrepareReference::estimated_reference_bytes`, `PreparePlanarReference::estimated_reference_bytes`, `WarmReference::is_deterministic`, and `PlanarWarmReference::is_deterministic` (with matching forwarding on `PreparedReference`, `PreparedPlanarReference`, and erased views).
+
 - zenpsy-api: borrow native map planes and grid/semantics through typed and erased
   assessments; add checked no-reference scoring and explicit paired/cached
   composition (`71ab39be`).

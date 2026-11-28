@@ -99,6 +99,12 @@ where
     fn id(&self) -> MetricId {
         self.0.id()
     }
+    fn headline_score_key(&self) -> Option<&str> {
+        self.0.headline_score_key()
+    }
+    fn steering_map_key(&self) -> Option<&str> {
+        self.0.steering_map_key()
+    }
     fn evaluate(
         &mut self,
         r: &PixelSlice<'_>,
@@ -113,6 +119,9 @@ where
     P::Output: 'static,
 {
     type Output = ErasedEvaluation;
+    fn is_deterministic(&self) -> bool {
+        self.0.is_deterministic()
+    }
     fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Self::Output> {
         self.0.evaluate(d, opts).map(ErasedEvaluation::new)
     }
@@ -125,6 +134,9 @@ where
         = Erased<M::Prepared<'a>>
     where
         Self: 'a;
+    fn estimated_reference_bytes(&self, width: u32, height: u32) -> Option<u64> {
+        self.0.estimated_reference_bytes(width, height)
+    }
     fn warm_reference(
         &mut self,
         r: &PixelSlice<'_>,
@@ -137,6 +149,11 @@ where
 /// Object-safe optional preparation. Only metrics with native prepared work
 /// implement this extension; a cold metric is not given a replay fallback.
 pub trait DynPrepareReference: Metric<Output = ErasedEvaluation> {
+    /// Optional pre-allocation memory estimate (in bytes) for preparing a
+    /// `width × height` reference.
+    fn estimated_reference_bytes(&self, _width: u32, _height: u32) -> Option<u64> {
+        None
+    }
     /// Prepare checked reference work. Returned objects retain dimensions and
     /// use fresh candidate controls, without retaining the preparation pulse.
     fn prepare(
@@ -148,6 +165,9 @@ pub trait DynPrepareReference: Metric<Output = ErasedEvaluation> {
 struct Checked<P>(PreparedReference<P>);
 impl<P: WarmReference> WarmReference for Checked<P> {
     type Output = P::Output;
+    fn is_deterministic(&self) -> bool {
+        self.0.is_deterministic()
+    }
     fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Self::Output> {
         self.0.score(d, opts)
     }
@@ -156,6 +176,9 @@ impl<M: PrepareReference> DynPrepareReference for Erased<M>
 where
     M::Output: 'static,
 {
+    fn estimated_reference_bytes(&self, width: u32, height: u32) -> Option<u64> {
+        self.0.estimated_reference_bytes(width, height)
+    }
     fn prepare(
         &mut self,
         r: &PixelSlice<'_>,
@@ -173,6 +196,12 @@ impl<M: Metric + ?Sized> Metric for Box<M> {
     fn id(&self) -> MetricId {
         (**self).id()
     }
+    fn headline_score_key(&self) -> Option<&str> {
+        (**self).headline_score_key()
+    }
+    fn steering_map_key(&self) -> Option<&str> {
+        (**self).steering_map_key()
+    }
     fn evaluate(
         &mut self,
         r: &PixelSlice<'_>,
@@ -184,6 +213,9 @@ impl<M: Metric + ?Sized> Metric for Box<M> {
 }
 impl<P: WarmReference + ?Sized> WarmReference for Box<P> {
     type Output = P::Output;
+    fn is_deterministic(&self) -> bool {
+        (**self).is_deterministic()
+    }
     fn evaluate(&mut self, d: &PixelSlice<'_>, opts: EvalOpts<'_>) -> MetricResult<Self::Output> {
         (**self).evaluate(d, opts)
     }
@@ -193,6 +225,9 @@ impl<M: PrepareReference + ?Sized> PrepareReference for Box<M> {
         = M::Prepared<'a>
     where
         Self: 'a;
+    fn estimated_reference_bytes(&self, width: u32, height: u32) -> Option<u64> {
+        (**self).estimated_reference_bytes(width, height)
+    }
     fn warm_reference(
         &mut self,
         r: &PixelSlice<'_>,
@@ -257,6 +292,9 @@ where
     P::Output: 'static,
 {
     type Output = ErasedEvaluation;
+    fn is_deterministic(&self) -> bool {
+        self.0.is_deterministic()
+    }
     fn evaluate_planar(
         &mut self,
         d: &zenpixels::plane::PlanarSlice<'_>,
@@ -278,6 +316,9 @@ where
     M::Output: 'static,
 {
     type PlanarPrepared = Erased<M::PlanarPrepared>;
+    fn estimated_reference_bytes(&self, width: u32, height: u32) -> Option<u64> {
+        self.0.estimated_reference_bytes(width, height)
+    }
     fn warm_planar_reference(
         &mut self,
         r: &zenpixels::plane::PlanarSlice<'_>,
@@ -298,6 +339,9 @@ impl<M: crate::PlanarMetric + ?Sized> crate::PlanarMetric for Box<M> {
 }
 impl<P: crate::PlanarWarmReference + ?Sized> crate::PlanarWarmReference for Box<P> {
     type Output = P::Output;
+    fn is_deterministic(&self) -> bool {
+        (**self).is_deterministic()
+    }
     fn evaluate_planar(
         &mut self,
         d: &zenpixels::plane::PlanarSlice<'_>,
@@ -316,6 +360,9 @@ impl<P: crate::PlanarWarmReference + ?Sized> crate::PlanarWarmReference for Box<
 }
 impl<M: crate::PreparePlanarReference + ?Sized> crate::PreparePlanarReference for Box<M> {
     type PlanarPrepared = M::PlanarPrepared;
+    fn estimated_reference_bytes(&self, width: u32, height: u32) -> Option<u64> {
+        (**self).estimated_reference_bytes(width, height)
+    }
     fn warm_planar_reference(
         &mut self,
         r: &zenpixels::plane::PlanarSlice<'_>,
@@ -329,6 +376,11 @@ impl<M: crate::PreparePlanarReference + ?Sized> crate::PreparePlanarReference fo
 /// The returned object retains checked geometry and interpretation. Native
 /// prepared state can still lend its map without boxing an assessment.
 pub trait DynPreparePlanarReference: crate::PlanarMetric<Output = ErasedEvaluation> {
+    /// Optional pre-allocation memory estimate (in bytes) for preparing a
+    /// `width × height` planar reference.
+    fn estimated_reference_bytes(&self, _width: u32, _height: u32) -> Option<u64> {
+        None
+    }
     /// Prepare actual owned native work, with fresh per-candidate controls.
     fn prepare_planar(
         &mut self,
@@ -340,6 +392,9 @@ impl<M: crate::PreparePlanarReference> DynPreparePlanarReference for Erased<M>
 where
     M::Output: 'static,
 {
+    fn estimated_reference_bytes(&self, width: u32, height: u32) -> Option<u64> {
+        self.0.estimated_reference_bytes(width, height)
+    }
     fn prepare_planar(
         &mut self,
         reference: &zenpixels::plane::PlanarSlice<'_>,
